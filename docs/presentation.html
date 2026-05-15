@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hackathon Monorepo Template</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #f8fafc; }
+    .slide { display: none; min-height: 100vh; padding: 4rem; }
+    .slide.active { display: flex; flex-direction: column; }
+    .slide h1 { font-size: 3rem; margin-bottom: 1rem; }
+    .slide h2 { font-size: 2rem; margin-bottom: 2rem; color: #3b82f6; }
+    .slide p, .slide li { font-size: 1.2rem; line-height: 1.8; color: #cbd5e1; }
+    .slide ul { list-style: none; margin-left: 1.5rem; }
+    .slide ul li::before { content: "→ "; color: #8b5cf6; }
+    .slide code { background: #1e293b; padding: 0.2rem 0.5rem; border-radius: 4px; font-family: 'Fira Code', monospace; font-size: 0.9rem; color: #3b82f6; }
+    .slide pre { background: #1e293b; padding: 1.5rem; border-radius: 8px; overflow-x: auto; margin: 1rem 0; }
+    .slide pre code { background: none; padding: 0; color: #e2e8f0; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; }
+    .card { background: #1e293b; border-radius: 12px; padding: 1.5rem; margin-bottom: 1rem; }
+    .card h3 { color: #3b82f6; margin-bottom: 0.8rem; font-size: 1.1rem; }
+    .card p, .card li { font-size: 0.95rem; }
+    .tag { display: inline-block; background: #3b82f6; color: white; padding: 0.2rem 0.8rem; border-radius: 20px; font-size: 0.8rem; margin-right: 0.5rem; }
+    .tag-purple { background: #8b5cf6; }
+    .tag-green { background: #10b981; }
+    .tag-orange { background: #f97316; }
+    .tag-dark { background: #1e293b; }
+    .nav { position: fixed; bottom: 2rem; right: 2rem; display: flex; gap: 0.5rem; }
+    .nav button { background: #3b82f6; color: white; border: none; padding: 0.8rem 1.2rem; border-radius: 8px; cursor: pointer; font-size: 1rem; }
+    .nav button:hover { background: #2563eb; }
+    .progress { position: fixed; top: 0; left: 0; height: 4px; background: #3b82f6; transition: width 0.3s; }
+    .stack-diagram { display: flex; align-items: center; justify-content: center; gap: 2rem; flex-wrap: wrap; margin: 2rem 0; }
+    .stack-item { background: #1e293b; padding: 1.5rem 2rem; border-radius: 12px; text-align: center; min-width: 150px; }
+    .stack-item .icon { font-size: 2rem; margin-bottom: 0.5rem; }
+    .stack-item .name { font-weight: bold; margin-bottom: 0.3rem; }
+    .stack-item .desc { font-size: 0.85rem; color: #94a3b8; }
+    .arrow { font-size: 2rem; color: #64748b; }
+    .tree { font-family: 'Fira Code', monospace; font-size: 0.85rem; line-height: 1.8; color: #94a3b8; }
+    .tree .dir { color: #3b82f6; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    th { background: #1e293b; padding: 0.8rem; text-align: left; color: #3b82f6; }
+    td { padding: 0.8rem; border-bottom: 1px solid #1e293b; }
+    tr:hover { background: #1e293b; }
+    .highlight { color: #f97316; font-weight: bold; }
+    .footer { position: fixed; bottom: 0; left: 0; right: 0; background: #1e293b; padding: 1rem 2rem; font-size: 0.9rem; color: #64748b; display: flex; justify-content: space-between; }
+    .badge { display: inline-block; padding: 0.3rem 0.8rem; border-radius: 6px; font-size: 0.8rem; font-weight: bold; margin-bottom: 0.5rem; }
+    .badge-blue { background: #1d4ed8; color: white; }
+    .badge-purple { background: #7c3aed; color: white; }
+    .backend-toggle { display: flex; gap: 1rem; margin: 2rem 0; }
+    .backend-card { flex: 1; background: #1e293b; border: 2px solid #334155; border-radius: 12px; padding: 1.5rem; cursor: pointer; }
+    .backend-card:hover { border-color: #3b82f6; }
+    .backend-card.selected { border-color: #3b82f6; background: #1e3a5f; }
+    .backend-card h4 { margin-bottom: 0.5rem; }
+    .vs-badge { background: #64748b; color: white; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: bold; align-self: center; }
+  </style>
+</head>
+<body>
+
+<div class="progress" id="progress"></div>
+
+<!-- SLIDE 1: Title -->
+<div class="slide active" id="slide-1">
+  <h1>Hackathon Monorepo Template</h1>
+  <p style="font-size: 1.5rem; color: #94a3b8; margin-bottom: 2rem;">Vercel + Supabase + Google Cloud + Verda GPU</p>
+  <div class="stack-diagram">
+    <div class="stack-item"><div class="icon">▲</div><div class="name">Vercel</div><div class="desc">Frontend + API</div></div>
+    <div class="stack-item"><div class="icon">◆</div><div class="name">Supabase</div><div class="desc">Database + Auth</div></div>
+    <div class="stack-item"><div class="icon">◎</div><div class="name">Cloud Run</div><div class="desc">Inference (serverless)</div></div>
+    <div class="stack-item"><div class="icon">◉</div><div class="name">Verda GPU</div><div class="desc">Inference (bare metal)</div></div>
+  </div>
+  <p style="margin-top: auto; text-align: center; color: #64748b;">
+    github.com/PlayerPlanet/cookiecutter-hackathon-template
+  </p>
+</div>
+
+<!-- SLIDE 2: What Is This -->
+<div class="slide" id="slide-2">
+  <h2>What Is This Template?</h2>
+  <div class="two-col">
+    <div>
+      <div class="card">
+        <h3>Problem</h3>
+        <ul>
+          <li>Hackathons need fast iteration: idea → deployed in minutes</li>
+          <li>Teams waste 2–4 hours on infrastructure setup</li>
+          <li>Cookiecutter templates risk <span class="highlight">disqualification</span> if code exists before the event</li>
+        </ul>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h3>Solution</h3>
+        <ul>
+          <li>Cookiecutter template — generates fresh project at hackathon start</li>
+          <li>Every file is <code>infrastructure only</code>, annotated with <code>TODO</code></li>
+          <li>One timestamped commit proves all code was written during the event</li>
+          <li>Pre-configured CI/CD deploys automatically on every push</li>
+        </ul>
+      </div>
+      <div class="card" style="border: 2px solid #f97316;">
+        <h3 style="color: #f97316;">Key Guarantee</h3>
+        <p>The generated repository has exactly <strong>one commit</strong> (the generation itself). No ancestral history.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 3: Inference Backend Choice -->
+<div class="slide" id="slide-3">
+  <h2>Choose Your Inference Backend</h2>
+  <p style="margin-bottom: 1rem;">At generation time, pick the inference backend that fits your hackathon project:</p>
+  <div class="backend-toggle">
+    <div class="backend-card">
+      <span class="badge badge-blue">CLOUD RUN</span>
+      <h4>Serverless Inference</h4>
+      <ul>
+        <li>Docker container → Cloud Run</li>
+        <li>Auto-scales, pay-per-use</li>
+        <li>No machine management</li>
+        <li>Best for: lighter inference, CPU tasks, quick demos</li>
+      </ul>
+    </div>
+    <div class="vs-badge">VS</div>
+    <div class="backend-card">
+      <span class="badge badge-purple">VERDA GPU</span>
+      <h4>Bare Metal GPU</h4>
+      <ul>
+        <li>Rent a GPU machine via verda.ai</li>
+        <li>SSH access, your startup script</li>
+        <li>Next.js calls Verda machine directly via HTTP</li>
+        <li>Best for: heavy GPU tasks, custom NN training, large models</li>
+      </ul>
+    </div>
+  </div>
+  <div class="card" style="border: 2px solid #8b5cf6;">
+    <h3 style="color: #8b5cf6;">How It Works</h3>
+    <p>The post-generate hook <strong>removes the unchosen backend</strong> from the generated repo. The result is clean — only the files relevant to your choice exist.</p>
+  </div>
+</div>
+
+<!-- SLIDE 4: Auth Provider Choice -->
+<div class="slide" id="slide-4">
+  <h2>Choose Your Auth Provider</h2>
+  <p style="margin-bottom: 1rem;">Pick the authentication strategy that fits your demo:</p>
+  <div class="backend-toggle">
+    <div class="backend-card">
+      <span class="badge badge-blue">SUPABASE</span>
+      <h4>Supabase Auth (Default)</h4>
+      <ul>
+        <li>Email/password, magic links, OTP</li>
+        <li>Managed by Supabase — no extra setup</li>
+        <li>Best for: most hackathon demos</li>
+      </ul>
+    </div>
+    <div class="vs-badge">VS</div>
+    <div class="backend-card">
+      <span class="badge badge-blue">NEXTAUTH</span>
+      <h4>NextAuth.js + OAuth</h4>
+      <ul>
+        <li>Google, GitHub, Apple one-click sign-in</li>
+        <li>Adds OAuth on top of Supabase Auth</li>
+        <li>Best for: better UX, social login</li>
+      </ul>
+    </div>
+    <div class="vs-badge">VS</div>
+    <div class="backend-card">
+      <span class="badge badge-dark">NONE</span>
+      <h4>No Authentication</h4>
+      <ul>
+        <li>Fully public app</li>
+        <li>No user accounts at all</li>
+        <li>Best for: fully open demos, demos that don't need users</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 5: Payments Choice -->
+<div class="slide" id="slide-5">
+  <h2>Choose Your Payments Solution</h2>
+  <div class="backend-toggle">
+    <div class="backend-card">
+      <span class="badge badge-dark">NONE</span>
+      <h4>No Payments</h4>
+      <ul>
+        <li>No payment integration</li>
+        <li>Add Stripe later during hackathon if needed</li>
+        <li>Best for: free demos, demos that don't need payments</li>
+      </ul>
+    </div>
+    <div class="vs-badge">VS</div>
+    <div class="backend-card">
+      <span class="badge badge-green">STRIPE</span>
+      <h4>Stripe</h4>
+      <ul>
+        <li>Full Stripe SDK + webhook handler skeleton</li>
+        <li>Payment intents, checkout, customer portal</li>
+        <li>Best for: monetisation demos, premium features, real payments</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 6: The Stack (Cloud Run Mode) -->
+<div class="slide" id="slide-6">
+  <h2>The Stack (Cloud Run Mode)</h2>
+  <div class="stack-diagram" style="margin-bottom: 2rem;">
+    <div class="stack-item" style="background: #0f172a; border: 2px solid #1e293b;"><div class="icon">⚡</div><div class="name">GitHub</div><div class="desc">CI/CD Pipeline</div></div>
+    <div class="arrow">→</div>
+    <div class="stack-item"><div class="icon">▲</div><div class="name">Vercel</div><div class="desc">Frontend + API</div></div>
+    <div class="stack-item"><div class="icon">◆</div><div class="name">Supabase</div><div class="desc">Postgres + Auth</div></div>
+    <div class="stack-item"><div class="icon">◎</div><div class="name">Cloud Run</div><div class="desc">Inference</div></div>
+  </div>
+  <table>
+    <tr><th>Layer</th><th>Technology</th><th>Deploys via</th></tr>
+    <tr><td>Frontend + API routes</td><td>Next.js 14 on Vercel</td><td>GitHub Actions (Vercel CLI)</td></tr>
+    <tr><td>Database + Auth + Realtime</td><td>Supabase (managed Postgres)</td><td>Manual or CLI</td></tr>
+    <tr><td>Inference Service</td><td>Node.js + Express on Cloud Run</td><td>Cloud Build + Cloud Run</td></tr>
+    <tr><td>CI/CD Orchestration</td><td>GitHub Actions</td><td>Push to branch</td></tr>
+  </table>
+</div>
+
+<!-- SLIDE 7: The Stack (Verda GPU Mode) -->
+<div class="slide" id="slide-7">
+  <h2>The Stack (Verda GPU Mode)</h2>
+  <div class="stack-diagram" style="margin-bottom: 2rem;">
+    <div class="stack-item" style="background: #0f172a; border: 2px solid #1e293b;"><div class="icon">⚡</div><div class="name">GitHub</div><div class="desc">CI/CD Pipeline</div></div>
+    <div class="arrow">→</div>
+    <div class="stack-item"><div class="icon">▲</div><div class="name">Vercel</div><div class="desc">Frontend + API</div></div>
+    <div class="stack-item"><div class="icon">◆</div><div class="name">Supabase</div><div class="desc">Postgres + Auth</div></div>
+    <div class="arrow">→</div>
+    <div class="stack-item"><div class="icon">◉</div><div class="name">Verda GPU</div><div class="desc">Inference (bare metal)</div></div>
+  </div>
+  <table>
+    <tr><th>Layer</th><th>Technology</th><th>Deploys via</th></tr>
+    <tr><td>Frontend + API routes</td><td>Next.js 14 on Vercel</td><td>GitHub Actions (Vercel CLI)</td></tr>
+    <tr><td>Database + Auth + Realtime</td><td>Supabase (managed Postgres)</td><td>Manual or CLI</td></tr>
+    <tr><td>Inference</td><td>Verda GPU machine (your rented server)</td><td>Startup script + SSH deploy script</td></tr>
+    <tr><td>CI/CD Orchestration</td><td>GitHub Actions</td><td>Push to branch</td></tr>
+  </table>
+  <div class="card" style="border: 2px solid #f97316;">
+    <h3 style="color: #f97316;">No Middleman</h3>
+    <p>Next.js calls the Verda GPU machine <strong>directly via HTTP</strong>. No Cloud Run, no extra hop. The machine has a public IP — it's just an HTTP server.</p>
+  </div>
+</div>
+
+<!-- SLIDE 8: Service Boundaries -->
+<div class="slide" id="slide-8">
+  <h2>Service Boundaries — What Goes Where?</h2>
+  <table>
+    <tr><th>What</th><th>Where</th><th>Why</th></tr>
+    <tr><td>Next.js frontend (SSR, ISR)</td><td><span class="tag">Vercel</span></td><td>Zero-config edge CDN, preview deploys per PR</td></tr>
+    <tr><td>Vercel serverless functions</td><td><span class="tag">Vercel</span></td><td>Tight frontend integration, fast iteration</td></tr>
+    <tr><td>User-facing API routes</td><td><span class="tag">Vercel</span></td><td>Same Vercel project, shared domain</td></tr>
+    <tr><td>Heavy backend / async tasks</td><td><span class="tag-purple tag">Cloud Run</span></td><td>GPU workloads, long-running jobs (cloudrun mode)</td></tr>
+    <tr><td>Database + Auth + Realtime</td><td><span class="tag-green tag">Supabase</span></td><td>Managed Postgres, no ops overhead</td></tr>
+    <tr><td>Inference / LLM calls</td><td><span class="tag-purple tag">Verda GPU</span></td><td>Bare metal GPU, direct HTTP (verda-gpu mode)</td></tr>
+    <tr><td>CI/CD orchestration</td><td><span class="tag-dark tag">GitHub Actions</span></td><td>Branch-based promotion, secret injection</td></tr>
+  </table>
+  <div class="card" style="margin-top: 1rem;">
+    <h3>Why Not Supabase Edge Functions for Inference?</h3>
+    <ul>
+      <li>Supabase Edge Functions are stateless and time-limited (max 60s)</li>
+      <li>Verda inference calls can take minutes for large prompts</li>
+      <li>Cloud Run supports min-instances = 1 (no cold starts) + 60s timeout</li>
+    </ul>
+  </div>
+</div>
+
+<!-- SLIDE 9: CI/CD Pipeline -->
+<div class="slide" id="slide-9">
+  <h2>CI/CD Pipeline (GitHub Actions)</h2>
+  <div class="two-col">
+    <div>
+      <div class="card">
+        <h3>Workflows</h3>
+        <ul>
+          <li><code>ci.yml</code> — every push/PR. Lint + TypeScript + test. 5 min timeout.</li>
+          <li><code>deploy-vercel.yml</code> — on push to dev/staging/main. Vercel pull → build → deploy.</li>
+          <li><code>deploy-cloudrun.yml</code> — cloudrun mode only. Cloud Build → Artifact Registry → Cloud Run.</li>
+          <li><code>deploy-all.yml</code> — orchestrated. Vercel → Cloud Run sequential.</li>
+        </ul>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h3>Secrets (GitHub Secrets)</h3>
+        <p>
+          <code>VERCEL_TOKEN</code><br>
+          <code>VERCEL_ORG_ID</code><br>
+          <code>VERCEL_PROJECT_ID</code><br>
+          <code>NEXT_PUBLIC_SUPABASE_URL</code><br>
+          <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code><br>
+          <code>SUPABASE_SERVICE_ROLE_KEY</code><br>
+          <code>GCP_SA_KEY</code> (cloudrun mode)<br>
+          <code>VERDA_SSH_HOST</code> (verda-gpu mode)<br>
+          <code>VERDA_SSH_USER</code> (verda-gpu mode)<br>
+          <code>VERDA_SSH_KEY_PATH</code> (verda-gpu mode)<br>
+          <code>GCP_PROJECT_ID</code> (GitHub Variable)
+        </p>
+      </div>
+      <div class="card">
+        <h3>Deploy Triggers</h3>
+        <p style="font-size: 0.9rem;">
+          feature/* → Vercel preview (PR)<br>
+          dev → Vercel dev<br>
+          staging → Vercel staging{% if "{{cookiecutter.inference_backend}}" == "cloudrun" %} + Cloud Run{% endif %}<br>
+          main → Vercel prod{% if "{{cookiecutter.inference_backend}}" == "cloudrun" %} + Cloud Run prod{% endif %}
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 10: Monorepo Structure -->
+<div class="slide" id="slide-10">
+  <h2>Monorepo Structure</h2>
+  <div class="two-col">
+    <div>
+      <div class="card">
+        <h3>Directory Layout</h3>
+        <div class="tree">
+<span class="dir">cookiecutter-hackathon-template/</span><br>
+├── .github/workflows/<br>
+│   ├── ci.yml<br>
+│   ├── deploy-vercel.yml<br>
+│   ├── deploy-cloudrun.yml{% if "{{cookiecutter.inference_backend}}" != "cloudrun" %}  ← removed for verda-gpu{% endif %}<br>
+│   └── deploy-all.yml<br>
+├── apps/<br>
+│   ├── web/ (Next.js → Vercel)<br>
+│   └── api/ (Vercel Serverless)<br>
+├── services/<br>
+│   └── inference/<br>
+{% if "{{cookiecutter.inference_backend}}" == "cloudrun" %}
+│       ├── src/index.ts      (Cloud Run)<br>
+│       ├── Dockerfile<br>
+│       └── package.json<br>
+{% else %}
+│       ├── provision.sh      (Verda startup script)<br>
+│       └── deploy-to-verda.sh (SSH deploy)<br>
+{% endif %}
+├── packages/<br>
+│   ├── shared/ (types, Zod)<br>
+│   └── db/ (Supabase client)<br>
+├── supabase/migrations/<br>
+│   └── 001_initial.sql<br>
+├── turbo.json<br>
+└── package.json
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h3>npm workspaces</h3>
+        <code>{"workspaces": ["apps/*", "services/*", "packages/*"]}</code>
+      </div>
+      <div class="card">
+        <h3>Turbo pipeline</h3>
+        <p>Build runs topologically (dependsOn ^build). Dev is persistent with cache disabled.</p>
+      </div>
+      <div class="card">
+        <h3>Tools</h3>
+        <ul>
+          <li>Turborepo for build orchestration</li>
+          <li>npm workspaces for package management</li>
+          <li>GitHub Actions for CI/CD</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 11: Inference Service (Cloud Run) -->
+<div class="slide" id="slide-11">
+  <h2>Inference Service — Cloud Run Mode</h2>
+  <div class="two-col">
+    <div>
+      <div class="card">
+        <h3>Dockerfile (Multi-stage)</h3>
+        <pre><code>FROM node:20-alpine AS base
+WORKDIR /app
+FROM base AS deps
+COPY package*.json ./
+RUN npm ci --omit=dev
+FROM base AS builder
+COPY --from=deps /app/node_modules ./
+COPY . . && npm run build
+FROM base AS runner
+ENV NODE_ENV=production
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/package*.json ./
+EXPOSE 3000
+CMD ["node", "dist/index.js"]</code></pre>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h3>Inference Skeleton (Node.js + Express)</h3>
+        <pre><code>import express, { Request, Response } from 'express';
+const app = express();
+app.use(express.json());
+
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok' });
+});
+
+app.post('/api/inference', async (req, res) => {
+  // TODO (hackathon): implement logic
+  res.status(501).json({ error: 'Not implemented' });
+});
+
+app.listen(3000, '0.0.0.0', () => { });</code></pre>
+      </div>
+      <div class="card" style="border: 2px solid #f97316;">
+        <h3 style="color: #f97316;">Cloud Run Config</h3>
+        <p>Deployed via <code>deploy-cloudrun.yml</code> on staging/main. Min-instances=1, no cold starts.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 12: Inference Service (Verda GPU) -->
+<div class="slide" id="slide-12">
+  <h2>Inference Service — Verda GPU Mode</h2>
+  <div class="two-col">
+    <div>
+      <div class="card">
+        <h3>provision.sh (Verda Startup Script)</h3>
+        <pre><code>#!/bin/bash
+# Runs at boot on the rented GPU machine
+set -e
+echo "[provision] Setting up GPU machine..."
+
+# TODO (hackathon): install Docker
+# apt-get update && apt-get install -y docker.io
+
+# TODO (hackathon): pull your inference image
+# docker pull REGISTRY/inference-service:latest
+
+# TODO (hackathon): run your inference container
+# docker run -d --gpus all -p 8080:3000 \
+#   --restart unless-stopped \
+#   REGISTRY/inference-service:latest
+
+echo "[provision] Done."</code></pre>
+      </div>
+      <div class="card">
+        <h3>deploy-to-verda.sh (CI/CD via SSH)</h3>
+        <pre><code># Builds image → pushes to registry
+# SSHs to Verda machine → pulls → restarts
+./deploy-to-verda.sh \
+  --host gpu01.verda.example.com \
+  --registry gcr.io/my-project</code></pre>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h3>How It Works</h3>
+        <ol style="list-style: decimal; margin-left: 1.5rem;">
+          <li>Rent a GPU machine at verda.ai</li>
+          <li>Paste <code>provision.sh</code> into the Verda dashboard startup script field</li>
+          <li>Machine boots, runs your startup script</li>
+          <li>Model server starts on port 8080</li>
+          <li>Next.js calls it directly: <code>http://&lt;verda_ssh_host&gt;:8080</code></li>
+          <li>Push updates via <code>deploy-to-verda.sh</code> (SSH)</li>
+        </ol>
+      </div>
+      <div class="card" style="border: 2px solid #f97316;">
+        <h3 style="color: #f97316;">Direct HTTP — No Middleman</h3>
+        <p>The Verda machine has a public IP. Next.js calls it directly. No Cloud Run, no API key.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 13: Supabase Schema -->
+<div class="slide" id="slide-13">
+  <h2>Supabase — Database Schema</h2>
+  <div class="two-col">
+    <div>
+      <div class="card">
+        <h3>Migration File (at hackathon start)</h3>
+        <pre><code>-- GENERATED by cookiecutter
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- TODO (hackathon): add your tables here
+-- CREATE TABLE public.my_table (
+--   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+--   name TEXT NOT NULL
+-- );
+
+-- TODO (hackathon): add RLS policies
+-- ALTER TABLE public.my_table ENABLE ROW LEVEL SECURITY;</code></pre>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h3>Supabase Client</h3>
+        <pre><code>// GENERATED by cookiecutter
+import { createClient } from '@supabase/supabase-js';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// TODO (hackathon): add your DB operations</code></pre>
+      </div>
+      <div class="card">
+        <h3>Why Not Prisma?</h3>
+        <ul>
+          <li>Supabase's JS client is auto-generated from Postgres schema</li>
+          <li>No schema drift between prisma schema and actual DB</li>
+          <li>Simpler hackathon workflow: just write SQL</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 14: Quick Start -->
+<div class="slide" id="slide-14">
+  <h2>Quick Start (Do at Hackathon Event)</h2>
+  <div class="two-col">
+    <div>
+      <div class="card">
+        <h3>Step 1: Generate the project</h3>
+        <pre><code>cookiecutter gh:PlayerPlanet/cookiecutter-hackathon-template</code></pre>
+        <p style="font-size: 0.9rem; color: #94a3b8; margin-top: 0.5rem;">Choose inference backend: cloudrun or verda-gpu</p>
+      </div>
+      <div class="card">
+        <h3>Step 2: Initialize git (timestamps your start)</h3>
+        <pre><code>cd my-project && git init && git add . && git commit -m "Scaffold from template"</code></pre>
+      </div>
+      <div class="card">
+        <h3>Step 3: Configure secrets</h3>
+        <pre><code>cp .env.example .env.local && add keys to GitHub Secrets</code></pre>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h3>Step 4: Set up inference backend</h3>
+{% if "{{cookiecutter.inference_backend}}" == "verda-gpu" %}
+        <pre><code># Rent GPU at verda.ai
+# Paste provision.sh into Verda dashboard startup script
+# Add VERDA_SSH_HOST to Vercel NEXT_PUBLIC_VERDA_URL</code></pre>
+{% else %}
+        <pre><code># GCP SA already in secrets
+# deploy-cloudrun.yml runs on staging/main
+git checkout -b dev && git push origin dev</code></pre>
+{% endif %}
+      </div>
+      <div class="card">
+        <h3>Step 5: Start building</h3>
+        <p>See slides 9–10 for where to write inference code.</p>
+        <p style="margin-top: 1rem; padding: 1rem; background: #0f172a; border-radius: 8px; text-align: center;">
+          Target: <span class="highlight">less than 60 minutes</span> from generation to first deployed preview.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 15: End -->
+<div class="slide" id="slide-15">
+  <h1>Go build something.</h1>
+  <div style="display: flex; gap: 3rem; justify-content: center; margin: 3rem 0; flex-wrap: wrap;">
+    <div style="text-align: center;">
+      <div style="font-size: 2rem;">⚡</div>
+      <div style="margin-top: 0.5rem;">GitHub</div>
+      <div style="font-size: 0.9rem; color: #64748b;">github.com/PlayerPlanet/cookiecutter-hackathon-template</div>
+    </div>
+    <div style="text-align: center;">
+      <div style="font-size: 2rem;">▲</div>
+      <div style="margin-top: 0.5rem;">Vercel</div>
+      <div style="font-size: 0.9rem; color: #64748b;">Frontend + API</div>
+    </div>
+    <div style="text-align: center;">
+      <div style="font-size: 2rem;">◆</div>
+      <div style="margin-top: 0.5rem;">Supabase</div>
+      <div style="font-size: 0.9rem; color: #64748b;">Database + Auth</div>
+    </div>
+  </div>
+  <div style="margin-top: 3rem; padding: 1.5rem; background: #1e293b; border-radius: 12px; text-align: center;">
+    <strong>Good luck, have fun, ship fast.</strong>
+  </div>
+</div>
+
+<div class="nav">
+  <button onclick="prev()">←</button>
+  <button onclick="next()">→</button>
+</div>
+
+<div class="footer">
+  <span>Hackathon Monorepo Template</span>
+  <span id="slide-num">1 / 15</span>
+</div>
+
+<script>
+  let current = 1;
+  const total = 15;
+
+  function show(n) {
+    document.querySelectorAll('.slide').forEach(s => s.classList.remove('active'));
+    document.getElementById('slide-' + n).classList.add('active');
+    document.getElementById('slide-num').textContent = n + ' / ' + total;
+    document.getElementById('progress').style.width = (n / total * 100) + '%';
+    current = n;
+  }
+
+  function next() { if (current < total) show(current + 1); }
+  function prev() { if (current > 1) show(current - 1); }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === ' ') next();
+    if (e.key === 'ArrowLeft') prev();
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,162 @@
+# =============================================================================
+# cookiecutter.yml — hackathon template choices
+# =============================================================================
+# Controls interactive prompts and file generation for the template.
+# cookiecutter.yml is the modern way to define choices in cookiecutter templates.
+# See: https://cookiecutter.readthedocs.io/en/latest/advanced/cli_options.html
+#
+# IMPORTANT: cookiecutter reads prompts from BOTH cookiecutter.yml and
+# cookiecutter.json. When a key appears in both, cookiecutter.yml takes precedence.
+# cookiecutter.json is kept for --no-input CLI usage (backward compatibility).
+#
+# PROMPTS at generation time:
+#   1. frontend_stack  : next-js | astro-svelte | react-vite
+#   2. frontend_ui     : tailwind | plain-css
+#   3. backend_lang    : typescript | python
+#   4. inference_backend : cloudrun | verda-gpu
+#   5. inference_pattern : queue_worker | async_http | sync_http
+#   6. auth_provider    : supabase | nextauth | none
+#   7. payments          : none | stripe
+#   8. queue_backend     : upstash | none
+# =============================================================================
+
+frontend_stack:
+  description: Which frontend framework should the project use?
+  type: select
+  options:
+    - next-js
+    - astro-svelte
+    - react-vite
+  default: next-js
+  help:
+    next-js: >
+      Next.js 14 (App Router): Full-stack React framework, Vercel-optimized.
+      Server components, API routes, image optimisation built-in.
+      Best for: most hackathons, SSR/SSG apps, SEO-friendly sites.
+    astro-svelte: >
+      Astro + Svelte: Islands architecture, zero JS by default, extremely fast.
+      Svelte for interactive components. Great for content-heavy, static-first demos.
+      Best for: blogs, documentation sites, marketing pages, lightweight SPAs.
+    react-vite: >
+      React + Vite: Plain React with Vite build tool. No framework conventions.
+      More flexible than Next.js, less opinionated about routing/data fetching.
+      Best for: custom architectures, micro-frontends, teams familiar with Vite.
+
+frontend_ui:
+  description: Which CSS approach should the frontend use?
+  type: select
+  options:
+    - tailwind
+    - plain-css
+  default: tailwind
+  help:
+    tailwind: >
+      Tailwind CSS (utility-first): Rapid UI development, consistent design tokens,
+      small production bundles with tree-shaking. Recommended for hackathons.
+    plain-css: >
+      Plain CSS: Vanilla stylesheets. No framework overhead, full control.
+      Better for learning CSS or for very custom, non-standard designs.
+
+backend_lang:
+  description: Which language should the API backend use?
+  type: select
+  options:
+    - typescript
+    - python
+  default: typescript
+  help:
+    typescript: >
+      TypeScript (Node.js/Vercel): Single language across the stack.
+      Vercel serverless functions, shared types with frontend.
+      Best for: full-stack TS teams, Vercel-heavy architectures.
+    python: >
+      Python (FastAPI): Fast async API, great for ML/AI integration,
+      excellent library ecosystem (PyTorch, transformers, pandas).
+      Best for: AI-heavy hacks, data science backends, easy model serving.
+
+inference_backend:
+  description: Which inference backend should the project use?
+  type: select
+  options:
+    - cloudrun
+    - verda-gpu
+  default: cloudrun
+  help:
+    cloudrun: >
+      Cloud Run (serverless): Deploy your inference Docker container to Google Cloud Run.
+      Scales automatically, pay-per-use, no machine management.
+      Best for: lighter inference, CPU tasks, smaller models, quick iteration.
+    verda-gpu: >
+      Verda GPU (bare metal): Rent a GPU machine via verda.ai, get SSH access.
+      Your startup script installs the inference stack; Next.js calls it directly via HTTP.
+      Best for: heavy GPU tasks, custom NN training, large models, fixed-cost rental.
+
+inference_pattern:
+  description: How should inference requests be handled?
+  type: select
+  options:
+    - queue_worker
+    - async_http
+    - sync_http
+  default: queue_worker
+  help:
+    queue_worker: >
+      Queue + Worker: API enqueues a job to Upstash Redis, a separate worker
+      process picks it up and runs inference. Best for long-running tasks,
+      batch processing, and scaling workers independently from the API.
+    async_http: >
+      Async HTTP API: API receives a request, kicks off inference internally,
+      returns 202 Accepted immediately with a job ID. Client polls for results.
+      Good for moderate inference times (seconds). Requires a queue even for
+      async pattern — worker becomes the async processor.
+    sync_http: >
+      Sync HTTP: API calls inference synchronously, waits for result, returns
+      directly. Simplest setup but blocks the API request for the full inference
+      duration. Only suitable for very fast models (<1s).
+
+auth_provider:
+  description: Which authentication provider should the project use?
+  type: select
+  options:
+    - supabase
+    - nextauth
+    - none
+  default: supabase
+  help:
+    supabase: >
+      Supabase Auth (default): Email/password, magic links, OTP — managed by Supabase.
+      No extra setup needed. Works great for most hackathon demos.
+    nextauth: >
+      NextAuth.js: Adds OAuth social sign-in (Google, GitHub, Apple) on top of Supabase.
+      Requires Google OAuth credentials. Better UX for end users (one-click sign-in).
+    none: >
+      No authentication: App is fully public. Add auth later if needed during hackathon.
+
+payments:
+  description: Which payments solution should the project use?
+  type: select
+  options:
+    - none
+    - stripe
+  default: none
+  help:
+    none: >
+      No payments: App has no payment integration. Add Stripe at the hackathon if needed.
+    stripe: >
+      Stripe: Full Stripe SDK + webhook handler skeleton. For monetisation demos,
+      premium features, or hackathon projects that need to process real payments.
+
+queue_backend:
+  description: Which queue/Redis backend should the project use?
+  type: select
+  options:
+    - upstash
+    - none
+  default: upstash
+  help:
+    upstash: >
+      Upstash Redis (serverless, free tier): Use Upstash Redis for job queues,
+      caching, and rate limiting. Zero-cost for hackathons, pay-per-use at scale.
+      Best for: queue workers, background jobs, temporary caching.
+    none: >
+      No queue: App has no background job system. Add Upstash at the hackathon if needed.

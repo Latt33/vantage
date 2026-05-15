@@ -1,0 +1,185 @@
+name: Deploy to Vercel
+
+on:
+  push:
+    branches: [main, develop, staging]
+  pull_request:
+    branches: [main, develop, staging]
+
+env:
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # Next.js deployment (always Vercel-native)
+  # ─────────────────────────────────────────────────────────────
+  deploy-web-nextjs:
+    name: Deploy Next.js Web
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: |
+      contains(github.event.head_commit.modified, 'apps/web/') ||
+      contains(github.event.head_commit.modified, 'apps/web/_auth/') ||
+      contains(github.event.head_commit.modified, 'apps/web/_payments/') ||
+      !contains(github.event.head_commit.modified, 'apps/web-astro/') &&
+      !contains(github.event.head_commit.modified, 'apps/web-react/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Pull Vercel Environment Information
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build Web App
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_VERDA_API_URL: ${{ secrets.NEXT_PUBLIC_VERDA_API_URL }}
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy to Vercel
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+  # ─────────────────────────────────────────────────────────────
+  # Astro + Svelte deployment (static adapter for Vercel)
+  # ─────────────────────────────────────────────────────────────
+  deploy-web-astro:
+    name: Deploy Astro Web
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: contains(github.event.head_commit.modified, 'apps/web-astro/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Astro
+        run: npm run build
+        working-directory: apps/web-astro
+
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          working-directory: apps/web-astro/dist
+
+  # ─────────────────────────────────────────────────────────────
+  # React + Vite deployment (static site on Vercel)
+  # ─────────────────────────────────────────────────────────────
+  deploy-web-react:
+    name: Deploy React+Vite Web
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: contains(github.event.head_commit.modified, 'apps/web-react/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build React+Vite
+        run: npm run build
+        working-directory: apps/web-react
+
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          working-directory: apps/web-react/dist
+
+  # ─────────────────────────────────────────────────────────────
+  # TypeScript API (Vercel serverless functions)
+  # Only deploys when backend_lang == typescript
+  # ─────────────────────────────────────────────────────────────
+  deploy-api-typescript:
+    name: Deploy API (TS → Vercel)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: contains(github.event.head_commit.modified, 'apps/api/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Pull Vercel Environment Information
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build API Functions
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VERDA_API_KEY: ${{ secrets.VERDA_API_KEY }}
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy to Vercel
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+  # ─────────────────────────────────────────────────────────────
+  # PR Preview deployment
+  # ─────────────────────────────────────────────────────────────
+  deploy-preview:
+    name: Deploy Preview (PR)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Pull Vercel Environment Information
+        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build Web App
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_VERDA_API_URL: ${{ secrets.NEXT_PUBLIC_VERDA_API_URL }}
+        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy Preview
+        run: vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }}
