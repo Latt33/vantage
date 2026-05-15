@@ -1,9 +1,0 @@
-{
-  "extends": "@hackathon/shared/tsconfig.json",
-  "compilerOptions": {
-    "outDir": "./dist",
-    "baseUrl": "."
-  },
-  "include": ["api/**/*"],
-  "exclude": ["node_modules"]
-}
