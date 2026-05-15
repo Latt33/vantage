@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 
-from backend.src.service.dem_data import fetch_dem_data
-from backend.src.service.ecmwf_wind_data import fetch_ecmwf_wind_data
+from src.service.dem_data import fetch_dem_data
+from src.service.ecmwf_wind_data import fetch_ecmwf_wind_data
 
 app = FastAPI(title="defence_hack backend")
 
