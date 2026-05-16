@@ -5,3 +5,4 @@ redis[asyncio]==5.2.1
 pydantic>=2.0.0
 python-dotenv>=1.0.0
 shapely==2.0.6
+pyproj==3.6.1
