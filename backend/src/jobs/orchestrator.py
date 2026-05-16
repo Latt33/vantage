@@ -31,18 +31,27 @@ from src.service.nls.land import fetch_land
 from src.service.nls.water import fetch_water
 from src.service.nls.infra import fetch_infra
 from src.service.n2yo.satellite import fetch_satellites
+from src.service.analysis.mcoo import build_mcoo
+from src.service.digitraffic.weathercam import fetch_weathercam
 
 logger = logging.getLogger(__name__)
 
-STAGES: list[tuple[str, object]] = [
-    ("weather",        fetch_weather),
-    ("water",          fetch_water),
-    ("land",           fetch_land),
-    ("infrastructure", fetch_infra),
-    ("dem",            fetch_dem),
-    ("satellites",     fetch_satellites),
+# stage_name must match the category folder name under src/data/{aoi_id}/
+FETCH_STAGES: list[tuple[str, object]] = [
+    ("weather",         fetch_weather),
+    ("water",           fetch_water),
+    ("land",            fetch_land),
+    ("infrastructure",  fetch_infra),
+    ("dem",             fetch_dem),
+    ("satellites",      fetch_satellites),
+    ("traffic_cameras", fetch_weathercam),
 ]
 
+DERIVED_STAGES: list[tuple[str, object]] = [
+    ("mcoo",            build_mcoo),
+]
+
+STAGES: list[tuple[str, object]] = FETCH_STAGES + DERIVED_STAGES
 STAGE_NAMES: list[str] = [name for name, _ in STAGES]
 
 
@@ -75,8 +84,11 @@ async def run_job(job_id: str, aoi_id: str, bbox: BBox) -> None:
 
     await asyncio.gather(*[
         _run_stage(job_id, aoi_id, name, fn, bbox)
-        for name, fn in STAGES
+        for name, fn in FETCH_STAGES
     ])
+
+    for name, fn in DERIVED_STAGES:
+        await _run_stage(job_id, aoi_id, name, fn, bbox)
 
     await set_job_status(job_id, "completed")
     logger.info("Job %s: all stages finished for AoI %s", job_id, aoi_id)

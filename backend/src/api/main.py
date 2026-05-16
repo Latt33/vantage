@@ -211,6 +211,7 @@ async def layer_file(aoi_id: str, category: str, filename: str) -> FileResponse:
         /api/aoi/{id}/layers/land/cover.geojson
         /api/aoi/{id}/layers/infrastructure/roads.geojson
         /api/aoi/{id}/layers/infrastructure/bridges.geojson
+        /api/aoi/{id}/layers/traffic_cameras/stations.geojson
     """
     if get_aoi_meta(aoi_id) is None:
         raise HTTPException(status_code=404, detail="AoI not found")
