@@ -160,8 +160,8 @@ function ForceRow({ capability, derivedSelected, onDerivedToggle }: ForceRowProp
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: 8,
-        padding: "10px 12px",
+        gap: 2,
+        padding: "4px 12px",
         borderBottom: "1px solid var(--color-border-subtle)",
       }}
     >
@@ -179,7 +179,7 @@ function ForceRow({ capability, derivedSelected, onDerivedToggle }: ForceRowProp
         >
           <CapabilityIcon name={capability.icon} size={20} color="var(--color-accent-teal)" />
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
           <div
             style={{
               fontFamily: "var(--font-ui)",
@@ -190,101 +190,63 @@ function ForceRow({ capability, derivedSelected, onDerivedToggle }: ForceRowProp
           >
             {capability.label}
           </div>
-          <div
-            style={{
-              fontFamily: "var(--font-data)",
-              fontSize: 10,
-              color: "var(--color-text-secondary)",
-              marginTop: 2,
-            }}
-          >
-            {capability.sublabel}
-          </div>
-          <div
-            style={{
-              fontFamily: "var(--font-ui)",
-              fontSize: 11,
-              fontWeight: 300,
-              color: "var(--color-text-secondary)",
-              marginTop: 6,
-              lineHeight: 1.35,
-            }}
-          >
-            {capability.description}
-          </div>
-        </div>
-      </div>
 
-      {hasDerived && (
-        <div style={{ marginLeft: 38, display: "flex", flexDirection: "column", gap: 4 }}>
-          <button
-            type="button"
-            onClick={() => setExpanded(e => !e)}
-            style={{
-              background: "none",
-              border: "none",
-              color: "var(--color-text-secondary)",
-              cursor: "pointer",
-              fontFamily: "var(--font-heading)",
-              fontSize: 10,
-              fontWeight: 600,
-              letterSpacing: "0.1em",
-              textTransform: "uppercase",
-              padding: 0,
-              textAlign: "left",
-            }}
-            aria-label={expanded ? "Collapse derived filters" : "Expand derived filters"}
-          >
-            {expanded ? "▾" : "▸"} Derived Filters
-          </button>
+          {hasDerived && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <button
+                type="button"
+                onClick={() => setExpanded(e => !e)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "var(--color-text-secondary)",
+                  cursor: "pointer",
+                  fontFamily: "var(--font-heading)",
+                  fontSize: 9,
+                  fontWeight: 600,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  padding: "4px 0 2px 0",
+                  textAlign: "left",
+                }}
+                aria-label={expanded ? "Collapse derived filters" : "Expand derived filters"}
+              >
+                {expanded ? "▾" : "▸"} Derived Filters
+              </button>
 
-          {expanded && capability.derivedFilters.map(filter => (
-            <label
-              key={`${capability.id}:${filter.id}`}
-              style={{
-                minHeight: 24,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                cursor: "pointer",
-              }}
-            >
-              <input
-                type="checkbox"
-                className="toggle"
-                checked={derivedSelected.has(`${capability.id}:${filter.id}`)}
-                onChange={() => onDerivedToggle(`${capability.id}:${filter.id}`)}
-              />
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span
+              {expanded && capability.derivedFilters.map(filter => (
+                <label
+                  key={`${capability.id}:${filter.id}`}
                   style={{
-                    display: "block",
-                    fontFamily: "var(--font-ui)",
-                    fontSize: 12,
-                    color: "var(--color-text-primary)",
-                    lineHeight: 1.15,
+                    minHeight: 20,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    cursor: "pointer",
                   }}
                 >
-                  {filter.label}
-                </span>
-                {filter.sublabel && (
+                  <input
+                    type="checkbox"
+                    className="toggle"
+                    checked={derivedSelected.has(`${capability.id}:${filter.id}`)}
+                    onChange={() => onDerivedToggle(`${capability.id}:${filter.id}`)}
+                  />
                   <span
                     style={{
-                      display: "block",
-                      marginTop: 1,
-                      fontFamily: "var(--font-data)",
-                      fontSize: 10,
-                      color: "var(--color-text-secondary)",
+                      fontFamily: "var(--font-ui)",
+                      fontSize: 11,
+                      color: "var(--color-text-primary)",
+                      lineHeight: 1.1,
                     }}
                   >
-                    {filter.sublabel}
+                    {filter.label}
                   </span>
-                )}
-              </span>
-            </label>
-          ))}
+                </label>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
