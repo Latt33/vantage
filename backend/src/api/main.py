@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.api.routers import aoi
 from src.api.routers import cellular
 from src.api.routers import dem
+from src.api.routers import derived
 from src.api.routers import infrastructure
 from src.api.routers import jobs
 from src.api.routers import land
@@ -58,3 +59,4 @@ app.include_router(traffic_cameras.router)
 app.include_router(mcoo.router)
 app.include_router(mission_window.router)
 app.include_router(mml.router)
+app.include_router(derived.router)

@@ -36,6 +36,7 @@ CATEGORY_TTL: dict[str, timedelta] = {
     "satellite_imagery": timedelta(days=7),
     "infrastructure": timedelta(hours=24),
     "mcoo":           timedelta(hours=24),
+    "derived":        timedelta(hours=24),
     "traffic_cameras": timedelta(hours=1),
 }
 
