@@ -317,3 +317,39 @@ html, body, #root {
 .maplibregl-ctrl-compass .maplibregl-ctrl-icon {
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'><text x='15' y='8' text-anchor='middle' font-family='sans-serif' font-size='8' font-weight='700' fill='%23e8e4d9'>N</text><polygon points='15,10 11,19 15,16 19,19' fill='%23e8622a'/><polygon points='15,28 11,19 15,22 19,19' fill='%238a8880'/><circle cx='15' cy='19' r='1.2' fill='%23e8e4d9'/></svg>") !important;
 }
+
+/* Scale control — minimal ruler overlay (no panel). MapLibre sets the
+   element's inline width to match the rendered distance; we draw the
+   horizontal rule with border-bottom and the two end caps with
+   ::before / ::after, all in the same 2px white stroke so it reads as
+   one continuous "U"-shaped tick. The numeric label floats above it
+   with a subtle text shadow for legibility over varied basemap colors. */
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl-scale {
+  position: relative;
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 2px solid var(--color-text-primary) !important;
+  color: var(--color-text-primary) !important;
+  font-family: var(--font-data) !important;
+  font-size: 11px !important;
+  letter-spacing: 0.06em;
+  text-align: center;
+  padding: 0 0 2px 0 !important;
+  margin: 0 10px 10px 0 !important;
+  box-shadow: none !important;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.85);
+  pointer-events: none;
+}
+
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl-scale::before,
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl-scale::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: 2px;
+  height: 8px;
+  background: var(--color-text-primary);
+}
+
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl-scale::before { left: 0; }
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl-scale::after  { right: 0; }

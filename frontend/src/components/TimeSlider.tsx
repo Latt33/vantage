@@ -19,6 +19,8 @@ interface Props {
   forecastHorizonHours?: number;
   /** Future-only bands drawn over the timeline track. */
   windows?: MissionWindowBand[];
+  /** When true, the band area renders a spinner overlay (window search in progress). */
+  analyzing?: boolean;
   /** AOI centroid — required for the daylight strip. If missing, strip is hidden. */
   aoiCentroid?: { lat: number; lon: number };
   /** Selected offset from now in hours. When omitted, the control manages its own state. */
@@ -112,6 +114,7 @@ function buildTicks(max: number): number[] {
 export default function TimeSlider({
   forecastHorizonHours = DEFAULT_FUTURE_HOURS,
   windows = [],
+  analyzing = false,
   aoiCentroid,
   selectedOffsetHours,
   onOffsetChange,
@@ -268,6 +271,40 @@ export default function TimeSlider({
       )}
 
       <div style={{ position: "relative", height: 28 }}>
+        <style>{`@keyframes ts-spin { to { transform: rotate(360deg); } }`}</style>
+        {analyzing && (
+          <div
+            style={{
+              position: "absolute",
+              left: 0, right: 0, top: 0, bottom: 12,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              background: "rgba(20, 20, 24, 0.55)",
+              zIndex: 4,
+              pointerEvents: "none",
+              fontFamily: "var(--font-data)",
+              fontSize: 11,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              color: "var(--color-accent-orange)",
+            }}
+          >
+            <span
+              aria-label="Analyzing"
+              style={{
+                display: "inline-block",
+                width: 14, height: 14,
+                border: "2px solid rgba(255,255,255,0.25)",
+                borderTopColor: "var(--color-accent-orange, #e8622a)",
+                borderRadius: "50%",
+                animation: "ts-spin 0.85s linear infinite",
+              }}
+            />
+            Searching mission windows…
+          </div>
+        )}
         {/* Mission-window bands — drawn over the future track. */}
         {windows.map((w, i) => {
           const start = Math.max(0, Math.min(w.startHour, max));
@@ -297,11 +334,12 @@ export default function TimeSlider({
                 position: "absolute",
                 left: `${leftPct}%`,
                 width: `${widthPct}%`,
-                top: 2,
-                bottom: 14,
+                top: isGood ? 0 : 2,
+                bottom: 12,
                 background: color,
-                borderTop: `1px solid ${border}`,
-                borderBottom: `1px solid ${border}`,
+                borderTop: `${isGood ? 2 : 1}px solid ${border}`,
+                borderBottom: `${isGood ? 2 : 1}px solid ${border}`,
+                boxShadow: isGood ? "0 0 6px rgba(80, 200, 110, 0.55) inset" : undefined,
                 pointerEvents: "none",
                 overflow: "hidden",
               }}

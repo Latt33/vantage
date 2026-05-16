@@ -32,6 +32,7 @@ Proxy API: Open-Meteo (https://open-meteo.com) — EU-hosted, no key required
 import asyncio
 import logging
 import math
+import os
 
 import pandas as pd
 
@@ -101,6 +102,38 @@ _ESSENTIAL_WEATHER_COLUMNS = {
     "wind_dir_deg",
     "wind_gust_ms",
 }
+
+
+def _env_true(name: str) -> bool:
+    value = (os.getenv(name) or "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _write_fallback_weather(aoi_id: str, points: list[tuple[float, float]], reason: str) -> dict:
+    df = build_backup_weather_dataframe(points)
+    out_path = category_file(aoi_id, "weather", "forecast.parquet")
+    write_parquet_grid(out_path, df)
+
+    time_steps = int(df["valid_time"].nunique()) if "valid_time" in df.columns else 0
+    write_category_meta(
+        aoi_id, "weather",
+        source="Demo backup weather profile",
+        confidence="medium",
+        feature_counts={"grid_points": len(points), "time_steps": time_steps},
+    )
+    logger.info(
+        "Fallback weather persisted: %d grid points × %d time steps (reason: %s)",
+        len(points),
+        time_steps,
+        reason,
+    )
+    return {
+        "source": "Demo backup weather profile",
+        "fallback": True,
+        "grid_points": len(points),
+        "time_steps": time_steps,
+        "reason": reason,
+    }
 
 
 def _grid_points(bbox: BBox) -> list[tuple[float, float]]:
@@ -174,6 +207,10 @@ async def fetch_weather(aoi_id: str, bbox: BBox) -> dict:
     """
     points = _grid_points(bbox)
 
+    if _env_true("WEATHER_FORCE_FALLBACK"):
+        logger.info("WEATHER_FORCE_FALLBACK enabled — skipping Open-Meteo and using fallback profile")
+        return _write_fallback_weather(aoi_id, points, "forced by WEATHER_FORCE_FALLBACK")
+
     params = {
         "latitude":       ",".join(f"{lat:.6f}" for lat, _ in points),
         "longitude":      ",".join(f"{lon:.6f}" for _, lon in points),
@@ -226,22 +263,4 @@ async def fetch_weather(aoi_id: str, bbox: BBox) -> dict:
 
     except Exception as exc:
         logger.warning("Open-Meteo weather fetch failed, using fallback profile: %s", exc)
-
-        df = build_backup_weather_dataframe(points)
-        out_path = category_file(aoi_id, "weather", "forecast.parquet")
-        write_parquet_grid(out_path, df)
-
-        time_steps = int(df["valid_time"].nunique()) if "valid_time" in df.columns else 0
-        write_category_meta(
-            aoi_id, "weather",
-            source="Demo backup weather profile",
-            confidence="medium",
-            feature_counts={"grid_points": len(points), "time_steps": time_steps},
-        )
-        return {
-            "source": "Demo backup weather profile",
-            "fallback": True,
-            "grid_points": len(points),
-            "time_steps": time_steps,
-            "reason": str(exc),
-        }
+        return _write_fallback_weather(aoi_id, points, str(exc))

@@ -25,6 +25,7 @@ import logging
 from src.jobs.store import set_job_status, set_stage_status
 from src.service._shared.bbox import BBox
 from src.service._shared.storage import is_stale
+from src.service.analysis.derived import build_derived
 from src.service.ecmwf.weather import fetch_weather
 from src.service.maptiler.satellite_imagery import fetch_satellite_imagery
 from src.service.nls.dem import fetch_dem
@@ -53,6 +54,7 @@ FETCH_STAGES: list[tuple[str, object]] = [
 
 DERIVED_STAGES: list[tuple[str, object]] = [
     ("mcoo",            build_mcoo),
+    ("derived",         build_derived),
 ]
 
 STAGES: list[tuple[str, object]] = FETCH_STAGES + DERIVED_STAGES

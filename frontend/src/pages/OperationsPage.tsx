@@ -19,6 +19,7 @@ import { cache } from "../registry/cache";
 import { SOURCES, loadSource } from "../sources";
 import { analysesForCapabilities } from "../analyses";
 import { fetchTrajectories, CONSTELLATION_COLORS, CONSTELLATION_COLOR_FALLBACK, CONSTELLATION_LABELS } from "../api/satelliteIntel";
+import { forward as mgrsForward } from "mgrs";
 
 const SOURCE_ACCENTS: Record<string, string> = {
   terrain:     "#8a7a5a",
@@ -137,6 +138,13 @@ interface JobInfo {
   jobId: string;
 }
 
+type ImageSourceWithUpdate = maplibregl.ImageSource & {
+  updateImage(options: {
+    url: string;
+    coordinates: [[number, number], [number, number], [number, number], [number, number]];
+  }): unknown;
+};
+
 interface SatelliteOverlayConfig {
   provider: string;
   tileset: string;
@@ -200,9 +208,22 @@ function loadCapabilities(): Capability[] {
 function bboxLabel(b: BoundingBox): string {
   const lon = (b.minLon + b.maxLon) / 2;
   const lat = (b.minLat + b.maxLat) / 2;
-  const lonStr = `${Math.abs(lon).toFixed(2)}°${lon >= 0 ? "E" : "W"}`;
-  const latStr = `${Math.abs(lat).toFixed(2)}°${lat >= 0 ? "N" : "S"}`;
-  return `${latStr} ${lonStr}`;
+  // 4-digit MGRS = 10 m precision, formatted with grid-zone + 100k-square + easting/northing
+  // (e.g. "34VFM 1234 1254"). Falls back to decimal degrees on conversion failure
+  // (e.g. polar regions outside the MGRS UPS bounds at this library's coverage).
+  try {
+    const raw = mgrsForward([lon, lat], 4); // returns "34VFM12341254"
+    const m = /^([0-9]{1,2}[A-Z])([A-Z]{2})([0-9]+)$/.exec(raw);
+    if (m) {
+      const half = m[3].length / 2;
+      return `${m[1]}${m[2]} ${m[3].slice(0, half)} ${m[3].slice(half)}`;
+    }
+    return raw;
+  } catch {
+    const lonStr = `${Math.abs(lon).toFixed(2)}°${lon >= 0 ? "E" : "W"}`;
+    const latStr = `${Math.abs(lat).toFixed(2)}°${lat >= 0 ? "N" : "S"}`;
+    return `${latStr} ${lonStr}`;
+  }
 }
 
 export default function OperationsPage() {
@@ -212,6 +233,8 @@ export default function OperationsPage() {
   const capabilities = useMemo(() => loadCapabilities(), []);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const movementCorridorsImageUrlRef = useRef<string | null>(null);
+  const fpvThreatImageUrlRef = useRef<string | null>(null);
 
   const [mapReady, setMapReady] = useState(false);
   const [layers, setLayers] = useState<LayerConfig[]>(INITIAL_LAYERS);
@@ -224,6 +247,7 @@ export default function OperationsPage() {
   const [missionWindowOpen, setMissionWindowOpen] = useState(false);
   const [missionConditions, setMissionConditions] = useState<MissionConditionsUi>(DEFAULT_CONDITIONS);
   const [missionWindows, setMissionWindows] = useState<MissionWindowBand[]>([]);
+  const [analyzingWindows, setAnalyzingWindows] = useState(false);
   const [timelineOffsetHours, setTimelineOffsetHours] = useState(0);
   const [cameraStation, setCameraStation] = useState<{ stationId: string; stationName: string | null } | null>(null);
   const [cameraDetail, setCameraDetail] = useState<TrafficCameraStationDetail | null>(null);
@@ -297,7 +321,6 @@ export default function OperationsPage() {
     if (!raw || !raw.features || raw.features.length === 0) return EMPTY_FC;
 
     const selectedMs = Date.now() + timelineOffsetHours * 3_600_000;
-    
     let bestTime: string | null = null;
     let minDiff = Infinity;
 
@@ -306,7 +329,7 @@ export default function OperationsPage() {
       if (!p || !p.valid_time) continue;
       const t = toEpochMs(p.valid_time);
       if (t === null) continue;
-      
+
       const diff = Math.abs(t - selectedMs);
       if (diff < minDiff) {
         minDiff = diff;
@@ -321,6 +344,27 @@ export default function OperationsPage() {
       features: raw.features.filter(f => f.properties?.valid_time === bestTime)
     } as FeatureCollection;
   }, [sourceData.weather, timelineOffsetHours]);
+
+  const selectedWeatherValidTime = useMemo(() => {
+    const feature = weatherDisplayData.features[0];
+    const validTime = feature?.properties?.valid_time;
+    return typeof validTime === "string" && validTime.trim() ? validTime : null;
+  }, [weatherDisplayData]);
+
+  const weatherForecastHorizonHours = useMemo(() => {
+    const raw = sourceData.weather;
+    if (!raw || !raw.features || raw.features.length === 0) return missionConditions.lookaheadHours;
+
+    const nowMs = Date.now();
+    let maxOffsetHours = 0;
+    for (const f of raw.features) {
+      const ts = toEpochMs(f.properties?.valid_time);
+      if (ts === null) continue;
+      const offsetHours = (ts - nowMs) / 3_600_000;
+      if (offsetHours > maxOffsetHours) maxOffsetHours = offsetHours;
+    }
+    return Math.max(1, Math.ceil(maxOffsetHours));
+  }, [sourceData.weather, missionConditions.lookaheadHours]);
 
   useEffect(() => {
     const currentJob = jobInfo;
@@ -427,7 +471,7 @@ export default function OperationsPage() {
     setExportOpen(true);
   }
 
-  function onApplyMissionWindow(cond: MissionConditionsUi) {
+  async function onApplyMissionWindow(cond: MissionConditionsUi) {
     setMissionConditions(cond);
     setMissionWindows(buildPlaceholderWindows(cond, satTracks));
   }
@@ -589,6 +633,10 @@ export default function OperationsPage() {
       new maplibregl.NavigationControl({ showCompass: true, showZoom: false, visualizePitch: false }),
       "top-right",
     );
+    map.addControl(
+      new maplibregl.ScaleControl({ maxWidth: 120, unit: "metric" }),
+      "bottom-right",
+    );
 
     map.on("load", () => {
       // AOI boundary
@@ -699,10 +747,11 @@ export default function OperationsPage() {
         paint: {
           "text-color": [
             "interpolate", ["linear"], ["coalesce", ["get", "wind_speed_ms"], 0],
-            0,  "#9ec6f0",
-            8,  "#f1c40f",
-            16, "#e67e22",
-            25, "#c0392b",
+            0,  "#b8dcff",
+            8,  "#6aaee8",
+            14, "#2f79c4",
+            20, "#154a94",
+            26, "#0a1f5c",
           ],
           "text-halo-color": "rgba(0,0,0,0.85)",
           "text-halo-width": 1.5,
@@ -1109,7 +1158,7 @@ export default function OperationsPage() {
   // Subsequent toggles flip visibility on/off without re-fetching.
   const movementCorridorsHeavyKey = "heavy_vehicles:movement_corridors";
   useEffect(() => {
-    if (!mapReady || !aoi || !jobInfo) return;
+    if (!mapReady || !aoi || !activeAoiId || !rasterVersion) return;
     // Wait for upstream stages so the backend has inputs ready when the
     // PNG is requested. The compute itself reads the cached files only.
     if (
@@ -1125,6 +1174,13 @@ export default function OperationsPage() {
     const sourceId = "derived-movement-corridors-heavy-src";
     const layerId = "derived-movement-corridors-heavy-raster";
     const enabled = derivedSelected.has(movementCorridorsHeavyKey);
+    const imageUrl = `${API_BASE_URL}/api/aoi/${activeAoiId}/derived/movement_corridors/heavy.png?v=${encodeURIComponent(rasterVersion)}`;
+    const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
+      [aoi.minLon, aoi.maxLat],
+      [aoi.maxLon, aoi.maxLat],
+      [aoi.maxLon, aoi.minLat],
+      [aoi.minLon, aoi.minLat],
+    ];
 
     if (!enabled) {
       if (map.getLayer(layerId)) {
@@ -1133,20 +1189,12 @@ export default function OperationsPage() {
       return;
     }
 
-    if (map.getSource(sourceId)) {
+    if (map.getSource(sourceId) && movementCorridorsImageUrlRef.current === imageUrl) {
       if (map.getLayer(layerId)) {
         map.setLayoutProperty(layerId, "visibility", "visible");
       }
       return;
     }
-
-    const imageUrl = `${API_BASE_URL}/api/aoi/${jobInfo.aoiId}/derived/movement_corridors/heavy.png?v=${encodeURIComponent(jobInfo.jobId)}`;
-    const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
-      [aoi.minLon, aoi.maxLat],
-      [aoi.maxLon, aoi.maxLat],
-      [aoi.maxLon, aoi.minLat],
-      [aoi.minLon, aoi.minLat],
-    ];
 
     setDerivedLoading((prev) => {
       if (prev.has(movementCorridorsHeavyKey)) return prev;
@@ -1165,7 +1213,10 @@ export default function OperationsPage() {
       })
       .then(() => {
         if (cancelled) return;
-        if (!map.getSource(sourceId)) {
+        const existingSource = map.getSource(sourceId) as ImageSourceWithUpdate | undefined;
+        if (existingSource) {
+          existingSource.updateImage({ url: imageUrl, coordinates });
+        } else {
           map.addSource(sourceId, { type: "image", url: imageUrl, coordinates });
           map.addLayer({
             id: layerId,
@@ -1177,6 +1228,7 @@ export default function OperationsPage() {
             },
           });
         }
+        movementCorridorsImageUrlRef.current = imageUrl;
       })
       .catch((err) => {
         if ((err as Error)?.name === "AbortError") return;
@@ -1196,7 +1248,7 @@ export default function OperationsPage() {
       cancelled = true;
       controller.abort();
     };
-  }, [aoi, jobInfo, mapReady, stages.dem, stages.land, stages.infrastructure, stages.water, derivedSelected]);
+  }, [aoi, activeAoiId, rasterVersion, mapReady, stages.dem, stages.land, stages.infrastructure, stages.water, derivedSelected]);
 
   // FPV-threat areas (drones) — lazy raster derived from land-cover density + weather.
   // Backend computes this from raw land cover polygons (dense-forest mask) and nearest
@@ -1204,7 +1256,7 @@ export default function OperationsPage() {
   // ToolPanel row can show the same loading spinner behavior as movement corridors.
   const fpvThreatAreasKey = "fpv_drones:fpv_threat_areas";
   useEffect(() => {
-    if (!mapReady || !aoi || !jobInfo) return;
+    if (!mapReady || !aoi || !activeAoiId || !rasterVersion) return;
     if (stages.land !== "done" || stages.weather !== "done") return;
 
     const map = mapRef.current;
@@ -1213,6 +1265,16 @@ export default function OperationsPage() {
     const sourceId = "derived-fpv-threat-src";
     const layerId = "derived-fpv-threat-raster";
     const enabled = derivedSelected.has(fpvThreatAreasKey);
+    const validTimeQuery = selectedWeatherValidTime
+      ? `?valid_time=${encodeURIComponent(selectedWeatherValidTime)}&v=${encodeURIComponent(rasterVersion)}`
+      : `?v=${encodeURIComponent(rasterVersion)}`;
+    const imageUrl = `${API_BASE_URL}/api/aoi/${activeAoiId}/derived/fpv_threat.png${validTimeQuery}`;
+    const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
+      [aoi.minLon, aoi.maxLat],
+      [aoi.maxLon, aoi.maxLat],
+      [aoi.maxLon, aoi.minLat],
+      [aoi.minLon, aoi.minLat],
+    ];
 
     if (!enabled) {
       if (map.getLayer(layerId)) {
@@ -1221,20 +1283,12 @@ export default function OperationsPage() {
       return;
     }
 
-    if (map.getSource(sourceId)) {
+    if (map.getSource(sourceId) && fpvThreatImageUrlRef.current === imageUrl) {
       if (map.getLayer(layerId)) {
         map.setLayoutProperty(layerId, "visibility", "visible");
       }
       return;
     }
-
-    const imageUrl = `${API_BASE_URL}/api/aoi/${jobInfo.aoiId}/derived/fpv_threat.png?v=${encodeURIComponent(jobInfo.jobId)}`;
-    const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
-      [aoi.minLon, aoi.maxLat],
-      [aoi.maxLon, aoi.maxLat],
-      [aoi.maxLon, aoi.minLat],
-      [aoi.minLon, aoi.minLat],
-    ];
 
     setDerivedLoading((prev) => {
       if (prev.has(fpvThreatAreasKey)) return prev;
@@ -1253,7 +1307,10 @@ export default function OperationsPage() {
       })
       .then(() => {
         if (cancelled) return;
-        if (!map.getSource(sourceId)) {
+        const existingSource = map.getSource(sourceId) as ImageSourceWithUpdate | undefined;
+        if (existingSource) {
+          existingSource.updateImage({ url: imageUrl, coordinates });
+        } else {
           map.addSource(sourceId, { type: "image", url: imageUrl, coordinates });
           map.addLayer({
             id: layerId,
@@ -1265,6 +1322,7 @@ export default function OperationsPage() {
             },
           });
         }
+        fpvThreatImageUrlRef.current = imageUrl;
       })
       .catch((err) => {
         if ((err as Error)?.name === "AbortError") return;
@@ -1284,7 +1342,7 @@ export default function OperationsPage() {
       cancelled = true;
       controller.abort();
     };
-  }, [aoi, jobInfo, mapReady, stages.land, stages.weather, derivedSelected]);
+  }, [aoi, activeAoiId, rasterVersion, mapReady, stages.land, stages.weather, derivedSelected, selectedWeatherValidTime]);
 
   // Sync layer visibility + opacity into MapLibre
   useEffect(() => {
@@ -1730,8 +1788,9 @@ export default function OperationsPage() {
       </div>
 
       <TimeSlider
-        forecastHorizonHours={missionConditions.lookaheadHours}
+        forecastHorizonHours={Math.max(missionConditions.lookaheadHours, weatherForecastHorizonHours)}
         windows={missionWindows}
+        analyzing={analyzingWindows}
         selectedOffsetHours={timelineOffsetHours}
         onOffsetChange={setTimelineOffsetHours}
         aoiCentroid={{
@@ -1750,6 +1809,7 @@ export default function OperationsPage() {
       <MissionWindowModal
         open={missionWindowOpen}
         initial={missionConditions}
+        analyzing={analyzingWindows}
         onClose={() => setMissionWindowOpen(false)}
         onApply={onApplyMissionWindow}
       />
@@ -1773,12 +1833,17 @@ export default function OperationsPage() {
 }
 
 /**
- * Placeholder window generator — UI-only.
+ * Mission window scoring.
  *
- * Builds a deterministic set of "good" / "uncertain" bands across the
- * configured horizon so the timeline shows something believable when
- * the operator presses Apply. Replace with the real
- * /api/mission-window/analyse response once it's wired up.
+ * Walks the loaded weather time-series and marks each forecast timestep as
+ * pass/fail against every *enabled* condition. Contiguous passing timesteps
+ * within the operator's lookahead horizon are emitted as one green "good"
+ * band on the timeline. Disabled thresholds are skipped — the operator
+ * controls which constraints are mandatory from the modal.
+ *
+ * Per-timestep scalar = AoI-wide mean of the grid points sharing that
+ * `valid_time`. Time-of-day uses the viewer's local clock to match the
+ * modal copy.
  */
 const OPTICAL_CONSTELLATIONS = new Set(["sentinel_2", "landsat_9", "planet_skysat"]);
 const SAR_CONSTELLATIONS     = new Set(["sentinel_1", "iceye_x"]);
@@ -1786,28 +1851,42 @@ const SAR_CONSTELLATIONS     = new Set(["sentinel_1", "iceye_x"]);
 function buildPlaceholderWindows(cond: MissionConditionsUi, satTracks: FeatureCollection): MissionWindowBand[] {
   const horizon = Math.max(1, cond.lookaheadHours);
 
-  // Score each ACTIVE atmospheric threshold as a 0..1 "permissiveness".
-  // Looser thresholds → longer / more confident windows.
-  // Rain on (no-rain required) is treated as a strict constraint (×0.6).
-  // Time-of-day on shrinks the available envelope (×0.65).
-  const parts: number[] = [];
-  if (cond.windEnabled)       parts.push(clamp01(cond.maxWindSpeedMs / 25));
-  if (cond.gustEnabled)       parts.push(clamp01(cond.maxWindGustMs / 40));
-  if (cond.cloudEnabled)      parts.push(clamp01(cond.maxCloudcoverPct / 100));
-  if (cond.visibilityEnabled) parts.push(clamp01(cond.minVisibilityM / 20000));
-  if (cond.rainEnabled)       parts.push(0.6);
-  if (cond.timeOfDayEnabled)  parts.push(0.65);
+  // Group every grid point by its forecast timestamp.
+  const buckets = new Map<string, { ts: number; features: typeof features }>();
+  for (const f of features) {
+    const p = (f.properties ?? {}) as Record<string, unknown>;
+    const validTime = p.valid_time;
+    if (typeof validTime !== "string" || !validTime) continue;
+    const ts = toEpochMs(validTime);
+    if (ts === null) continue;
+    let bucket = buckets.get(validTime);
+    if (!bucket) {
+      bucket = { ts, features: [] };
+      buckets.set(validTime, bucket);
+    }
+    bucket.features.push(f);
+  }
 
-  const looseness = parts.length === 0 ? 1 : parts.reduce((a, b) => a * b, 1);
+  const nowMs = Date.now();
+  const horizonH = Math.max(1, cond.lookaheadHours);
+  const horizonMs = horizonH * 3_600_000;
 
-  const seeds = [
-    { center: horizon * 0.18 },
-    { center: horizon * 0.40 },
-    { center: horizon * 0.65 },
-    { center: horizon * 0.88 },
-  ];
+  // Keep only forecast steps inside [now, now + horizon].
+  const steps = Array.from(buckets.values())
+    .filter((b) => b.ts >= nowMs - 30 * 60_000 && b.ts - nowMs <= horizonMs)
+    .sort((a, b) => a.ts - b.ts);
 
-  const baseWidth = 6 + 14 * looseness; // 6h … 20h
+  if (steps.length === 0) return [];
+
+  const evals = steps.map((b) => {
+    const stats = atmosphericMeans(b.features);
+    return {
+      hourOffset: Math.max(0, (b.ts - nowMs) / 3_600_000),
+      pass: stepSatisfiesConditions(cond, stats, new Date(b.ts)),
+    };
+  });
+
+  // Coalesce runs of passing timesteps into one band each.
   const bands: MissionWindowBand[] = [];
 
   for (let i = 0; i < seeds.length; i++) {
@@ -1862,9 +1941,59 @@ function buildPlaceholderWindows(cond: MissionConditionsUi, satTracks: FeatureCo
   return bands;
 }
 
-function clamp01(v: number): number {
-  if (Number.isNaN(v)) return 0;
-  return Math.max(0, Math.min(1, v));
+function atmosphericMeans(features: FeatureCollection["features"]): AtmosStats {
+  const acc: Record<keyof AtmosStats, number[]> = {
+    windMs: [], gustMs: [], visibilityM: [], cloudPct: [], precipMm: [],
+  };
+  const keyMap: Record<string, keyof AtmosStats> = {
+    wind_speed_ms:    "windMs",
+    wind_gust_ms:     "gustMs",
+    visibility_m:     "visibilityM",
+    cloudcover_pct:   "cloudPct",
+    precipitation_mm: "precipMm",
+  };
+  for (const f of features) {
+    const p = (f.properties ?? {}) as Record<string, unknown>;
+    for (const [src, dst] of Object.entries(keyMap)) {
+      const v = p[src];
+      if (typeof v === "number" && Number.isFinite(v)) acc[dst].push(v);
+    }
+  }
+  const mean = (arr: number[]) =>
+    arr.length === 0 ? null : arr.reduce((a, b) => a + b, 0) / arr.length;
+  return {
+    windMs:      mean(acc.windMs),
+    gustMs:      mean(acc.gustMs),
+    visibilityM: mean(acc.visibilityM),
+    cloudPct:    mean(acc.cloudPct),
+    precipMm:    mean(acc.precipMm),
+  };
+}
+
+function stepSatisfiesConditions(
+  cond: MissionConditionsUi,
+  stats: AtmosStats,
+  when: Date,
+): boolean {
+  if (cond.windEnabled       && stats.windMs      !== null && stats.windMs      > cond.maxWindSpeedMs) return false;
+  if (cond.gustEnabled       && stats.gustMs      !== null && stats.gustMs      > cond.maxWindGustMs)  return false;
+  if (cond.visibilityEnabled && stats.visibilityM !== null && stats.visibilityM < cond.minVisibilityM) return false;
+  if (cond.cloudEnabled      && stats.cloudPct    !== null && stats.cloudPct    > cond.maxCloudcoverPct) return false;
+  if (cond.rainEnabled       && stats.precipMm    !== null && stats.precipMm    > 0.05) return false;
+  if (cond.timeOfDayEnabled) {
+    const hour = when.getHours();
+    const s = cond.timeStartHourUtc;
+    const e = cond.timeEndHourUtc;
+    if (s === e) {
+      if (hour !== s) return false;
+    } else if (s < e) {
+      if (hour < s || hour >= e) return false;
+    } else if (!(hour >= s || hour < e)) {
+      // Window crosses midnight (e.g. 22 → 06).
+      return false;
+    }
+  }
+  return true;
 }
 
 function createTrafficCameraIcon(): ImageData {

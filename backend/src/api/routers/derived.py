@@ -9,13 +9,13 @@ finishes.
 import asyncio
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from src.api._responses import ensure_aoi
 from src.service._shared.bbox import BBox
 from src.service._shared.storage import category_file
-from src.service.analysis.fpv_threat import build_fpv_threat
+from src.service.analysis.fpv_threat import build_fpv_threat_stack, resolve_fpv_threat_raster
 from src.service.analysis.movement_corridors import (
     build_movement_corridors_heavy,
 )
@@ -82,7 +82,10 @@ async def get_movement_corridors_heavy(aoi_id: str) -> FileResponse:
 
 
 @router.get("/fpv_threat.png", response_class=FileResponse)
-async def get_fpv_threat(aoi_id: str) -> FileResponse:
+async def get_fpv_threat(
+    aoi_id: str,
+    valid_time: str | None = Query(default=None),
+) -> FileResponse:
     """FPV-drone threat-areas raster (PNG, EPSG:4326 coverage of AoI).
 
     Combines forest cover with the nearest wind forecast grid point:
@@ -91,23 +94,25 @@ async def get_fpv_threat(aoi_id: str) -> FileResponse:
     higher threat.
     """
     meta = ensure_aoi(aoi_id)
-    out_path = category_file(aoi_id, "derived", "fpv_threat.png")
+    out_path = resolve_fpv_threat_raster(aoi_id, valid_time)
 
-    if not out_path.exists():
-        lock = _lock_for(aoi_id, "fpv_threat")
+    if out_path is None or not out_path.exists():
+        lock = _lock_for(aoi_id, "fpv_threat_stack")
         async with lock:
-            if not out_path.exists():
+            out_path = resolve_fpv_threat_raster(aoi_id, valid_time)
+            if out_path is None or not out_path.exists():
                 bbox = _bbox_from_meta(meta)
                 try:
-                    await asyncio.to_thread(build_fpv_threat, aoi_id, bbox)
+                    await asyncio.to_thread(build_fpv_threat_stack, aoi_id, bbox)
                 except Exception as exc:
                     logger.exception("fpv_threat compute failed: %s", exc)
                     raise HTTPException(
                         status_code=500,
                         detail=f"compute failed: {exc}",
                     )
+                out_path = resolve_fpv_threat_raster(aoi_id, valid_time)
 
-    if not out_path.exists():
+    if out_path is None or not out_path.exists():
         raise HTTPException(status_code=503, detail="derived raster not ready")
 
     return FileResponse(out_path, media_type="image/png")
