@@ -26,7 +26,6 @@ from src.api.schemas import (
     MissionWindowResponse,
     WindowScore,
 )
-from src.service._shared.formats import read_parquet_grid
 from src.service._shared.storage import category_file, read_json
 
 logger = logging.getLogger(__name__)
@@ -170,7 +169,7 @@ def _load_forecast(aoi_id: str) -> tuple[pd.DataFrame, dict]:
         raise MissionWindowError(404, f"No weather forecast found for AOI {aoi_id}")
 
     try:
-        df = read_parquet_grid(parquet_path)
+        df = pd.read_parquet(parquet_path)
     except Exception as exc:
         logger.warning("Could not read %s: %s", parquet_path, exc)
         raise MissionWindowError(422, "Forecast data is malformed or incomplete") from exc
