@@ -6,6 +6,13 @@ export interface Capability {
   sublabel: string;
   description: string;
   icon: CapabilityIconName;
+  derivedFilters: CapabilityFilter[];
+}
+
+export interface CapabilityFilter {
+  id: string;
+  label: string;
+  sublabel?: string;
 }
 
 export const CAPABILITIES: Capability[] = [
@@ -15,6 +22,9 @@ export const CAPABILITIES: Capability[] = [
     sublabel: "MBT · IFV · APC",
     description: "Requires paved/hardened routes, bridges rated 60t+",
     icon: "tank",
+    derivedFilters: [
+      { id: "movement_corridors", label: "Movement Corridors", sublabel: "Terrain + weather derived" },
+    ],
   },
   {
     id: "light_infantry",
@@ -22,6 +32,9 @@ export const CAPABILITIES: Capability[] = [
     sublabel: "Dismounted",
     description: "Cross-country movement, terrain concealment critical",
     icon: "infantry",
+    derivedFilters: [
+      { id: "movement_corridors", label: "Movement Corridors", sublabel: "Terrain + weather derived" },
+    ],
   },
   {
     id: "towed_artillery",
@@ -29,6 +42,9 @@ export const CAPABILITIES: Capability[] = [
     sublabel: "155mm · 122mm",
     description: "Requires survey control, firing positions, ammo supply",
     icon: "artillery",
+    derivedFilters: [
+      { id: "artillery_positions", label: "Artillery Positions", sublabel: "Terrain + weather derived" },
+    ],
   },
   {
     id: "logistics",
@@ -36,6 +52,9 @@ export const CAPABILITIES: Capability[] = [
     sublabel: "Supply · Medical",
     description: "Route capacity, chokepoints, medical facilities",
     icon: "logistics",
+    derivedFilters: [
+      { id: "logistic_chokepoints", label: "Logistic Chokepoints", sublabel: "Terrain + weather derived" },
+    ],
   },
   {
     id: "fpv_drones",
@@ -43,6 +62,9 @@ export const CAPABILITIES: Capability[] = [
     sublabel: "UAS · ISR",
     description: "Wind speed, precipitation, RF environment critical",
     icon: "drone",
+    derivedFilters: [
+      { id: "fpv_threat_areas", label: "FPV Threat Areas", sublabel: "Terrain + weather derived" },
+    ],
   },
   {
     id: "fortification",
@@ -50,5 +72,9 @@ export const CAPABILITIES: Capability[] = [
     sublabel: "Prepared positions",
     description: "Soil type, drainage, concealment from air/sat",
     icon: "fortification",
+    derivedFilters: [
+      { id: "diggable_ground", label: "Diggable Ground", sublabel: "Terrain + weather derived" },
+      { id: "sightlines", label: "Sightlines", sublabel: "Terrain + weather derived" },
+    ],
   },
 ];

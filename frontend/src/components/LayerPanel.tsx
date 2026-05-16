@@ -1,11 +1,20 @@
+import { useState } from "react";
+import { INFRASTRUCTURE, InfraNode } from "../data/infrastructure";
 import { LayerConfig, LayerId, LayerSection } from "../types";
 
 interface LayerPanelProps {
   sections: LayerSection[];
+  infrastructureSelected: Set<string>;
+  onInfrastructureToggle: (id: string) => void;
   onChange: (id: LayerId, patch: Partial<LayerConfig>) => void;
 }
 
-export default function LayerPanel({ sections, onChange }: LayerPanelProps) {
+export default function LayerPanel({
+  sections,
+  infrastructureSelected,
+  onInfrastructureToggle,
+  onChange,
+}: LayerPanelProps) {
   return (
     <div
       style={{
@@ -39,6 +48,18 @@ export default function LayerPanel({ sections, onChange }: LayerPanelProps) {
           ))}
         </div>
       ))}
+
+      <div>
+        <SectionHeader title="Infrastructure" />
+        {INFRASTRUCTURE.map(node => (
+          <InfraRow
+            key={node.id}
+            node={node}
+            selected={infrastructureSelected}
+            onToggle={onInfrastructureToggle}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -182,6 +203,84 @@ function LayerRow({ layer, onChange }: RowProps) {
           />
         </div>
       )}
+    </div>
+  );
+}
+
+interface InfraRowProps {
+  node: InfraNode;
+  selected: Set<string>;
+  onToggle: (id: string) => void;
+  depth?: number;
+}
+
+function InfraRow({ node, selected, onToggle, depth = 0 }: InfraRowProps) {
+  const [expanded, setExpanded] = useState(false);
+  const hasChildren = !!node.children && node.children.length > 0;
+
+  return (
+    <div style={{ borderBottom: depth === 0 ? "1px solid var(--color-border-subtle)" : "none" }}>
+      <div
+        style={{
+          minHeight: 30,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: depth === 0 ? "0 12px" : "0 12px 0 28px",
+        }}
+      >
+        <input
+          type="checkbox"
+          className="toggle"
+          checked={selected.has(node.id)}
+          onChange={() => onToggle(node.id)}
+        />
+        <div style={{ flex: 1, minWidth: 0, lineHeight: 1.1 }}>
+          <div
+            style={{
+              fontFamily: "var(--font-ui)",
+              fontSize: depth === 0 ? 13 : 12,
+              color: "var(--color-text-primary)",
+            }}
+          >
+            {node.label}
+          </div>
+          {node.sublabel && (
+            <div
+              style={{
+                marginTop: 2,
+                fontFamily: "var(--font-data)",
+                fontSize: 10,
+                color: "var(--color-text-secondary)",
+              }}
+            >
+              {node.sublabel}
+            </div>
+          )}
+        </div>
+        {hasChildren && (
+          <button
+            type="button"
+            onClick={() => setExpanded(e => !e)}
+            style={{
+              background: "none",
+              border: "none",
+              padding: "0 2px",
+              color: "var(--color-text-secondary)",
+              cursor: "pointer",
+              fontFamily: "var(--font-data)",
+              fontSize: 12,
+            }}
+            aria-label={expanded ? "Collapse" : "Expand"}
+          >
+            {expanded ? "▾" : "▸"}
+          </button>
+        )}
+      </div>
+
+      {expanded && hasChildren && node.children!.map(child => (
+        <InfraRow key={child.id} node={child} selected={selected} onToggle={onToggle} depth={depth + 1} />
+      ))}
     </div>
   );
 }
