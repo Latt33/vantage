@@ -38,6 +38,7 @@ from src.service._shared.bbox import BBox
 from src.service._shared.client import client
 from src.service._shared.formats import write_parquet_grid
 from src.service._shared.storage import category_file, write_category_meta
+from src.service.ecmwf.weather_backup import build_backup_weather_dataframe
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,13 @@ _PARAM_RENAME: dict[str, str] = {
     "shortwave_radiation":       "shortwave_radiation_wm2",
 }
 
+_ESSENTIAL_WEATHER_COLUMNS = {
+    "valid_time",
+    "wind_speed_ms",
+    "wind_dir_deg",
+    "wind_gust_ms",
+}
+
 
 def _grid_points(bbox: BBox) -> list[tuple[float, float]]:
     def _snap_up(v: float, res: float) -> float:
@@ -123,6 +131,46 @@ def _grid_points(bbox: BBox) -> list[tuple[float, float]]:
         points = [(clat, clon)]
 
     return points[:_MAX_POINTS]
+
+
+def _payload_to_dataframe(points: list[tuple[float, float]], payload: dict | list) -> pd.DataFrame:
+    """Normalize Open-Meteo payload into the canonical forecast grid DataFrame."""
+    results: list[dict] = payload if isinstance(payload, list) else [payload]
+    times: list[str] = results[0].get("hourly", {}).get("time", []) if results else []
+
+    rows = []
+    for (pt_lat, pt_lon), result in zip(points, results):
+        hourly = result.get("hourly", {})
+        for t_idx, time_str in enumerate(times):
+            row: dict = {"lon": pt_lon, "lat": pt_lat, "valid_time": time_str}
+            for param in _HOURLY_PARAMS:
+                key = _PARAM_RENAME.get(param, param)
+                series = hourly.get(param, [])
+                row[key] = series[t_idx] if t_idx < len(series) else None
+            rows.append(row)
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+
+    float_cols = [c for c in df.columns if c not in ("lon", "lat", "valid_time")]
+    df[float_cols] = df[float_cols].astype("float32")
+    return df
+
+
+def _live_weather_is_usable(df: pd.DataFrame) -> bool:
+    """Reject empty or all-null live responses so demo fallback can take over."""
+    if df.empty:
+        return False
+    if not _ESSENTIAL_WEATHER_COLUMNS.issubset(df.columns):
+        return False
+    if not df["valid_time"].notna().any():
+        return False
+    return (
+        df["wind_speed_ms"].notna().any()
+        and df["wind_dir_deg"].notna().any()
+        and df["wind_gust_ms"].notna().any()
+    )
 
 
 async def fetch_weather(aoi_id: str, bbox: BBox) -> dict:
@@ -150,53 +198,50 @@ async def fetch_weather(aoi_id: str, bbox: BBox) -> dict:
         resp.raise_for_status()
         payload = resp.json()
 
-        # Open-Meteo returns a list when multiple coordinates are requested,
-        # a single object when only one. Normalise to a list.
-        results: list[dict] = payload if isinstance(payload, list) else [payload]
-
-        times: list[str] = results[0].get("hourly", {}).get("time", []) if results else []
-
-        rows = []
-        for (pt_lat, pt_lon), result in zip(points, results):
-            hourly = result.get("hourly", {})
-            for t_idx, time_str in enumerate(times):
-                row: dict = {"lon": pt_lon, "lat": pt_lat, "valid_time": time_str}
-                for param in _HOURLY_PARAMS:
-                    key = _PARAM_RENAME.get(param, param)
-                    series = hourly.get(param, [])
-                    row[key] = series[t_idx] if t_idx < len(series) else None
-                rows.append(row)
-
-        df = pd.DataFrame(rows)
-        float_cols = [c for c in df.columns if c not in ("lon", "lat", "valid_time")]
-        df[float_cols] = df[float_cols].astype("float32")
+        df = _payload_to_dataframe(points, payload)
+        if not _live_weather_is_usable(df):
+            raise ValueError("live weather payload missing usable wind data")
 
         out_path = category_file(aoi_id, "weather", "forecast.parquet")
         write_parquet_grid(out_path, df)
 
+        time_steps = int(df["valid_time"].nunique()) if "valid_time" in df.columns else 0
+
         logger.info(
             "Open-Meteo weather: %d grid points × %d time steps → forecast.parquet (1 HTTP call)",
-            len(results), len(times),
+            len(points), time_steps,
         )
 
         write_category_meta(
             aoi_id, "weather",
             source="Open-Meteo (best_match)",
             confidence="high",
-            feature_counts={"grid_points": len(points), "time_steps": len(times)},
+            feature_counts={"grid_points": len(points), "time_steps": time_steps},
         )
         return {
             "source": "Open-Meteo (best_match)",
             "grid_points": len(points),
-            "time_steps": len(times),
+            "time_steps": time_steps,
         }
 
     except Exception as exc:
-        logger.warning("Open-Meteo weather fetch failed: %s", exc)
+        logger.warning("Open-Meteo weather fetch failed, using fallback profile: %s", exc)
+
+        df = build_backup_weather_dataframe(points)
+        out_path = category_file(aoi_id, "weather", "forecast.parquet")
+        write_parquet_grid(out_path, df)
+
+        time_steps = int(df["valid_time"].nunique()) if "valid_time" in df.columns else 0
         write_category_meta(
             aoi_id, "weather",
-            source="Open-Meteo (best_match)",
-            confidence="low",
-            feature_counts={},
+            source="Demo backup weather profile",
+            confidence="medium",
+            feature_counts={"grid_points": len(points), "time_steps": time_steps},
         )
-        return {"source": "Open-Meteo (best_match)", "error": str(exc)}
+        return {
+            "source": "Demo backup weather profile",
+            "fallback": True,
+            "grid_points": len(points),
+            "time_steps": time_steps,
+            "reason": str(exc),
+        }

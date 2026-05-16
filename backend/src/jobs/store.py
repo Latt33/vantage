@@ -23,6 +23,7 @@ TTL is short — jobs are transient. Data persistence is handled by the filesyst
 import json
 import os
 import uuid
+import asyncio
 from datetime import datetime, timezone
 
 import redis.asyncio as aioredis
@@ -31,6 +32,15 @@ _REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 _JOB_TTL = 60 * 60  # 1 hour — jobs are transient, data lives on disk
 
 _redis: aioredis.Redis = aioredis.from_url(_REDIS_URL, decode_responses=True)
+_job_locks: dict[str, asyncio.Lock] = {}
+
+
+def _job_lock(job_id: str) -> asyncio.Lock:
+    lock = _job_locks.get(job_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _job_locks[job_id] = lock
+    return lock
 
 
 def new_id() -> str:
@@ -54,16 +64,18 @@ async def get_job(job_id: str) -> dict | None:
 
 
 async def set_job_status(job_id: str, status: str) -> None:
-    job = await get_job(job_id)
-    if job is None:
-        return
-    job["status"] = status
-    await _redis.set(f"job:{job_id}", json.dumps(job), ex=_JOB_TTL)
+    async with _job_lock(job_id):
+        job = await get_job(job_id)
+        if job is None:
+            return
+        job["status"] = status
+        await _redis.set(f"job:{job_id}", json.dumps(job), ex=_JOB_TTL)
 
 
 async def set_stage_status(job_id: str, stage: str, status: str) -> None:
-    job = await get_job(job_id)
-    if job is None:
-        return
-    job["stages"][stage] = status
-    await _redis.set(f"job:{job_id}", json.dumps(job), ex=_JOB_TTL)
+    async with _job_lock(job_id):
+        job = await get_job(job_id)
+        if job is None:
+            return
+        job["stages"][stage] = status
+        await _redis.set(f"job:{job_id}", json.dumps(job), ex=_JOB_TTL)
