@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import maplibregl from "maplibre-gl";
 import type { FeatureCollection } from "geojson";
-import { BoundingBox, LayerConfig, LayerId, LayerSection } from "../types";
+import { BoundingBox, LayerConfig, LayerId, LayerSection, WeatherMetricId } from "../types";
 import { bboxToArea, setArea } from "../area";
 import { API_BASE_URL, MAPTILER_KEY } from "../config";
 import { CAPABILITIES, Capability } from "../data/capabilities";
@@ -40,7 +40,6 @@ const INITIAL_LAYERS: LayerConfig[] = SOURCES.map((s) => ({
 const BASE_IDS:   LayerId[] = SOURCES.filter((s) => s.category === "base").map((s) => s.id);
 const ATMOS_IDS:  LayerId[] = SOURCES.filter((s) => s.category === "atmospheric").map((s) => s.id);
 const DEMO_IDS:   LayerId[] = SOURCES.filter((s) => s.category === "demographic").map((s) => s.id);
-const INFRA_IDS:  LayerId[] = SOURCES.filter((s) => s.category === "infrastructure").map((s) => s.id);
 const SURV_IDS:   LayerId[] = SOURCES.filter((s) => s.category === "surveillance").map((s) => s.id);
 
 // MapLibre source id for each data source id
@@ -57,27 +56,47 @@ const MAP_SOURCE_IDS: Record<string, string> = {
 
 // MapLibre layer ids that each data source drives
 const MAP_LAYER_IDS: Record<string, string[]> = {
-  landcover:   ["natural-landcover-fill", "natural-landcover-line"],
+  landcover:   ["natural-landcover-fill", "natural-landcover-line", "natural-landcover-label"],
   forest:      ["natural-forest-fill"],
   water:       ["natural-water-fill", "natural-water-line"],
-  weather:     ["natural-weather-points"],
-  terrain:     ["dem-terrain-points"],
+  weather:     ["natural-weather-cloud-amount", "natural-weather-cloud-height", "natural-weather-visibility", "natural-weather-temperature", "natural-weather-wind-speed"],
+  terrain:     ["dem-terrain-fill"],
   infra_roads: ["infra-roads-line"],
   cellular:    ["cellular-circle"],
   satellites:  ["satellites-circle"],
 };
 
-const MAP_LAYER_OPACITY_PROP: Record<string, "fill-opacity" | "line-opacity" | "circle-opacity"> = {
+const MAP_LAYER_OPACITY_PROP: Record<string, "fill-opacity" | "line-opacity" | "circle-opacity" | "heatmap-opacity"> = {
   "natural-landcover-fill": "fill-opacity",
   "natural-landcover-line": "line-opacity",
   "natural-forest-fill":    "fill-opacity",
   "natural-water-fill":     "fill-opacity",
   "natural-water-line":     "line-opacity",
-  "natural-weather-points": "circle-opacity",
-  "dem-terrain-points":     "circle-opacity",
+  "natural-weather-cloud-amount":   "fill-opacity",
+  "natural-weather-cloud-height":    "fill-opacity",
+  "natural-weather-visibility":      "fill-opacity",
+  "natural-weather-temperature":     "fill-opacity",
+  "natural-weather-wind-speed":      "fill-opacity",
+  "dem-terrain-fill":       "fill-opacity",
   "infra-roads-line":       "line-opacity",
   "cellular-circle":        "circle-opacity",
   "satellites-circle":      "circle-opacity",
+};
+
+const DEFAULT_WEATHER_METRICS: Record<WeatherMetricId, boolean> = {
+  cloudAmount: false,
+  cloudHeight: false,
+  visibility: false,
+  temperature: false,
+  windSpeed: true,
+};
+
+const WEATHER_METRIC_LAYER_IDS: Record<WeatherMetricId, string> = {
+  cloudAmount: "natural-weather-cloud-amount",
+  cloudHeight: "natural-weather-cloud-height",
+  visibility: "natural-weather-visibility",
+  temperature: "natural-weather-temperature",
+  windSpeed: "natural-weather-wind-speed",
 };
 
 // Maps each source id to its backend job stage name
@@ -132,6 +151,7 @@ export default function OperationsPage() {
   const [mapReady, setMapReady] = useState(false);
   const [layers, setLayers] = useState<LayerConfig[]>(INITIAL_LAYERS);
   const [analysisLayers, setAnalysisLayers] = useState<Record<string, { visible: boolean; opacity: number }>>({});
+  const [weatherMetrics, setWeatherMetrics] = useState<Record<WeatherMetricId, boolean>>(DEFAULT_WEATHER_METRICS);
   const [infraSelected, setInfraSelected] = useState<Set<string>>(new Set());
   const [derivedSelected, setDerivedSelected] = useState<Set<string>>(new Set());
   const [exportOpen, setExportOpen] = useState(false);
@@ -179,7 +199,17 @@ export default function OperationsPage() {
     };
   }, [aoi, jobInfo]);
 
+  // Mapping from infra node id -> source id in SOURCES (if implemented)
+  const INFRA_TO_SOURCE: Record<string, string | undefined> = {
+    roads: "infra_roads",
+    rail: "infra_roads",
+    towers: "cellular",
+  };
+
   function toggleInfra(id: string) {
+    // only allow toggling infra nodes that have an implemented source
+    const src = INFRA_TO_SOURCE[id];
+    if (typeof src === "undefined") return;
     setInfraSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -210,6 +240,10 @@ export default function OperationsPage() {
 
       return next;
     });
+  }
+
+  function toggleWeatherMetric(id: WeatherMetricId) {
+    setWeatherMetrics((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
   function onExport() {
@@ -372,22 +406,6 @@ export default function OperationsPage() {
       });
 
       // ── Base ──────────────────────────────────────────────────────────────
-      map.addSource(MAP_SOURCE_IDS.landcover, { type: "geojson", data: EMPTY_FC });
-      map.addLayer({
-        id: "natural-landcover-fill",
-        type: "fill",
-        source: MAP_SOURCE_IDS.landcover,
-        layout: { visibility: "none" },
-        paint: { "fill-color": "#5a7a5a", "fill-opacity": 0.45 },
-      });
-      map.addLayer({
-        id: "natural-landcover-line",
-        type: "line",
-        source: MAP_SOURCE_IDS.landcover,
-        layout: { visibility: "none" },
-        paint: { "line-color": "#7c9b7c", "line-width": 0.7, "line-opacity": 0.55 },
-      });
-
       map.addSource(MAP_SOURCE_IDS.forest, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
         id: "natural-forest-fill",
@@ -415,24 +433,64 @@ export default function OperationsPage() {
         paint: { "line-color": "#4e8ad1", "line-width": 1.6, "line-opacity": 0.8 },
       });
 
-      // DEM elevation grid — circles sized to fill the ~60 m grid at every zoom level
+      map.addSource(MAP_SOURCE_IDS.landcover, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "natural-landcover-fill",
+        type: "fill",
+        source: MAP_SOURCE_IDS.landcover,
+        layout: { visibility: "none" },
+        paint: {
+          "fill-color": [
+            "match",
+            ["coalesce", ["get", "land_class"], "other"],
+            "forest", "#2a7a2a",
+            "built", "#8b5a2b",
+            "water", "#2a6db5",
+            "wetland", "#4f7f5b",
+            "open", "#a8b85f",
+            "rock", "#7a7a7a",
+            "other", "#5a7a5a",
+            "#5a7a5a",
+          ],
+          "fill-opacity": 0.55,
+        },
+      });
+      map.addLayer({
+        id: "natural-landcover-line",
+        type: "line",
+        source: MAP_SOURCE_IDS.landcover,
+        layout: { visibility: "none" },
+        paint: { "line-color": "#d9d4c8", "line-width": 0.6, "line-opacity": 0.6 },
+      });
+      map.addLayer({
+        id: "natural-landcover-label",
+        type: "symbol",
+        source: MAP_SOURCE_IDS.landcover,
+        layout: {
+          visibility: "none",
+          "text-field": ["coalesce", ["get", "land_label"], ["get", "land_class"], "Land"],
+          "text-size": 10,
+          "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
+          "text-anchor": "center",
+          "text-allow-overlap": false,
+        },
+        paint: {
+          "text-color": "#f5f1e8",
+          "text-halo-color": "#111111",
+          "text-halo-width": 1,
+        },
+      });
+
+      // DEM elevation grid — rendered as polygon cells so it reads like a raster surface
       map.addSource(MAP_SOURCE_IDS.terrain, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
-        id: "dem-terrain-points",
-        type: "circle",
+        id: "dem-terrain-fill",
+        type: "fill",
         source: MAP_SOURCE_IDS.terrain,
         layout: { visibility: "none" },
         paint: {
-          // At zoom 8 circles are 1 px; they scale up so adjacent points always touch.
-          "circle-radius": ["interpolate", ["exponential", 2], ["zoom"],
-            8,  1,
-            10, 3,
-            12, 7,
-            14, 16,
-          ],
-          "circle-color": [
-            "interpolate", ["linear"],
-            ["coalesce", ["get", "elevation_m"], 0],
+          "fill-color": [
+            "interpolate", ["linear"], ["coalesce", ["get", "elevation_m"], 0],
             0,   "#1e3a1e",
             30,  "#2e5c1e",
             80,  "#4a8020",
@@ -440,33 +498,55 @@ export default function OperationsPage() {
             250, "#a0b860",
             400, "#c8c880",
           ],
-          "circle-stroke-width": 0,
-          "circle-blur": 0.4,
-          "circle-opacity": 0.85,
+          "fill-opacity": 0.9,
+          "fill-outline-color": "rgba(0,0,0,0.14)",
         },
       });
 
       // ── Atmospheric ───────────────────────────────────────────────────────
       map.addSource(MAP_SOURCE_IDS.weather, { type: "geojson", data: EMPTY_FC });
-      map.addLayer({
-        id: "natural-weather-points",
-        type: "circle",
-        source: MAP_SOURCE_IDS.weather,
-        layout: { visibility: "none" },
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 6, 4, 10, 8],
-          "circle-color": [
-            "interpolate", ["linear"],
-            ["coalesce", ["get", "wind_speed_ms"], 0],
-            0,  "#2a6db5",
-            8,  "#d4a017",
-            16, "#c0392b",
-          ],
-          "circle-stroke-color": "#111111",
-          "circle-stroke-width": 0.8,
-          "circle-opacity": 0.75,
+      const weatherLayerDefs: Array<{ id: string; property: string; colorStops: [number, string][] }> = [
+        {
+          id: "natural-weather-cloud-amount",
+          property: "cloudcover_pct",
+          colorStops: [[0.0, "#1e3a5f"], [0.25, "#4c78a8"], [0.55, "#91a7c0"], [0.8, "#d0d7df"], [1, "#f5f7fa"]],
         },
-      });
+        {
+          id: "natural-weather-cloud-height",
+          property: "cloudcover_high_pct",
+          colorStops: [[0.0, "#2c7a7b"], [0.25, "#3f8e8f"], [0.55, "#7aa89b"], [0.8, "#c5d6bf"], [1, "#f0f4e8"]],
+        },
+        {
+          id: "natural-weather-visibility",
+          property: "visibility_m",
+          colorStops: [[0.0, "#c0392b"], [0.25, "#d35400"], [0.55, "#f1c40f"], [0.85, "#2ecc71"], [1, "#1e8449"]],
+        },
+        {
+          id: "natural-weather-temperature",
+          property: "temperature_c",
+          colorStops: [[0.0, "#143d59"], [0.25, "#2a6db5"], [0.5, "#f1c40f"], [0.75, "#e67e22"], [1, "#c0392b"]],
+        },
+        {
+          id: "natural-weather-wind-speed",
+          property: "wind_speed_ms",
+          colorStops: [[0.0, "#2a6db5"], [0.55, "#d4a017"], [1, "#c0392b"]],
+        },
+      ] as const;
+
+      for (const def of weatherLayerDefs) {
+        map.addLayer({
+          id: def.id,
+          type: "fill",
+          source: MAP_SOURCE_IDS.weather,
+          layout: { visibility: "none" },
+          paint: {
+            "fill-color": ["interpolate", ["linear"], ["coalesce", ["get", def.property], 0], ...def.colorStops.flatMap(([a, b]) => [a, b])],
+            "fill-opacity": 0.72,
+            "fill-outline-color": "rgba(0,0,0,0.12)",
+          },
+        });
+      }
+
 
       // ── Infrastructure ────────────────────────────────────────────────────
       map.addSource(MAP_SOURCE_IDS.infra_roads, { type: "geojson", data: EMPTY_FC });
@@ -475,7 +555,25 @@ export default function OperationsPage() {
         type: "line",
         source: MAP_SOURCE_IDS.infra_roads,
         layout: { visibility: "none" },
-        paint: { "line-color": "#a8a8a0", "line-width": 1.5, "line-opacity": 0.8 },
+        paint: {
+          // color by feature length (meters)
+          "line-color": [
+            "interpolate", ["linear"], ["coalesce", ["get", "length_m"], 0],
+            0, "#ffd47a",
+            100, "#f1c40f",
+            1000, "#d35400",
+            5000, "#c0392b",
+            20000, "#7a1919",
+          ],
+          "line-width": [
+            "interpolate", ["linear"], ["coalesce", ["get", "length_m"], 0],
+            0, 0.8,
+            1000, 1.4,
+            5000, 2.4,
+            20000, 3.5,
+          ],
+          "line-opacity": 0.9,
+        },
       });
 
       // ── Surveillance ──────────────────────────────────────────────────────
@@ -530,7 +628,12 @@ export default function OperationsPage() {
       if (!sourceId) continue;
       const src = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
       if (!src) continue;
-      src.setData(data);
+      try {
+        src.setData(data);
+        console.info(`[map] source ${sourceId} setData — features=${(data as any).features?.length ?? 0}`);
+      } catch (err) {
+        console.warn(`[map] failed to setData for ${sourceId}`, err);
+      }
     }
   }, [mapReady, sourceData]);
 
@@ -541,6 +644,7 @@ export default function OperationsPage() {
     if (!map) return;
 
     for (const layer of layers) {
+      if (layer.id === "weather") continue;
       const mapLayerIds = MAP_LAYER_IDS[layer.id] ?? [];
       for (const mapLayerId of mapLayerIds) {
         if (!map.getLayer(mapLayerId)) continue;
@@ -548,11 +652,33 @@ export default function OperationsPage() {
 
         const opacityProp = MAP_LAYER_OPACITY_PROP[mapLayerId];
         if (opacityProp) {
-          map.setPaintProperty(mapLayerId, opacityProp, layer.opacity);
+          try {
+            map.setPaintProperty(mapLayerId, opacityProp, layer.opacity);
+          } catch (err) {
+            console.warn(`[map] failed to set opacity for ${mapLayerId}`, err);
+          }
         }
+        console.info(`[map] layer ${mapLayerId} visibility=${layer.visible}`);
       }
     }
   }, [layers, mapReady]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current;
+    if (!map) return;
+
+    const weatherLayer = layers.find((layer) => layer.id === "weather");
+    const weatherVisible = weatherLayer?.visible ?? false;
+
+    for (const metricId of Object.keys(WEATHER_METRIC_LAYER_IDS) as WeatherMetricId[]) {
+      const mapLayerId = WEATHER_METRIC_LAYER_IDS[metricId];
+      if (!map.getLayer(mapLayerId)) continue;
+      const visible = weatherVisible && weatherMetrics[metricId];
+      map.setLayoutProperty(mapLayerId, "visibility", visible ? "visible" : "none");
+      console.info(`[map] weather metric ${metricId} visibility=${visible}`);
+    }
+  }, [layers, weatherMetrics, mapReady]);
 
   // Sync loadState badges with backend stage status.
   // Does NOT include `layers` in deps — avoids re-running when loadState itself changes.
@@ -610,15 +736,40 @@ export default function OperationsPage() {
     navigate("/login");
   }
 
+  const infraEnabled = useMemo(() => new Set(Object.keys(INFRA_TO_SOURCE).filter(k => typeof INFRA_TO_SOURCE[k] !== "undefined")), []);
+  const infraStatusById = useMemo(() => {
+    const roads = layers.find((layer) => layer.id === "infra_roads");
+    const towers = layers.find((layer) => layer.id === "cellular");
+    return {
+      roads: { loadState: roads?.loadState, hasData: roads?.hasData },
+      rail: { loadState: roads?.loadState, hasData: roads?.hasData },
+      towers: { loadState: towers?.loadState, hasData: towers?.hasData },
+    };
+  }, [layers]);
+
   const sections: LayerSection[] = [
     {
       title: "Natural Filters",
       layers: layers.filter((l) => BASE_IDS.includes(l.id) || ATMOS_IDS.includes(l.id)),
     },
     { title: "Demographic",     layers: layers.filter((l) => DEMO_IDS.includes(l.id)) },
-    { title: "Infrastructure",  layers: layers.filter((l) => INFRA_IDS.includes(l.id)) },
-    { title: "Surveillance",    layers: layers.filter((l) => SURV_IDS.includes(l.id)) },
+    { title: "Surveillance",    layers: layers.filter((l) => SURV_IDS.includes(l.id) && l.id !== "cellular") },
   ];
+
+  // When infra selections change, toggle the corresponding source layers' visibility.
+  useEffect(() => {
+    setLayers((prev) =>
+      prev.map((l) => {
+        if (l.id === "infra_roads") {
+          return { ...l, visible: infraSelected.has("roads") };
+        }
+        if (l.id === "cellular") {
+          return { ...l, visible: infraSelected.has("towers") };
+        }
+        return l;
+      })
+    );
+  }, [infraSelected]);
 
   const activeCount =
     layers.filter((l) => l.visible).length +
@@ -672,6 +823,11 @@ export default function OperationsPage() {
         <LayerPanel
           sections={sections}
           infrastructureSelected={infraSelected}
+          infraEnabled={infraEnabled}
+          infraStatusById={infraStatusById}
+          weatherMetrics={weatherMetrics}
+          onWeatherMetricToggle={toggleWeatherMetric}
+          roadLegendVisible={layers.some((l) => l.id === "infra_roads" && l.visible)}
           onInfrastructureToggle={toggleInfra}
           onChange={onLayerChange}
         />

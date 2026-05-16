@@ -12,3 +12,9 @@ router = APIRouter(prefix="/api/aoi/{aoi_id}/infrastructure", tags=["infrastruct
 async def get_roads(aoi_id: str) -> FileResponse:
     """Road network."""
     return serve_layer_file(aoi_id, "infrastructure", "roads.geojson")
+
+
+@router.get("/rail", response_class=FileResponse)
+async def get_rail(aoi_id: str) -> FileResponse:
+    """Rail network (currently served from the same roads source)."""
+    return serve_layer_file(aoi_id, "infrastructure", "roads.geojson")
