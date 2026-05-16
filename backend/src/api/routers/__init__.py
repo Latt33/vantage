@@ -13,6 +13,7 @@ from . import layers
 from . import mcoo
 from . import mml
 from . import satellites
+from . import satellite_imagery
 from . import system
 from . import traffic_cameras
 from . import water
@@ -29,6 +30,7 @@ __all__ = [
     "infrastructure",
     "dem",
     "satellites",
+    "satellite_imagery",
     "traffic_cameras",
     "mcoo",
     "mml",

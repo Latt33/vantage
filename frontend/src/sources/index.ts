@@ -242,6 +242,10 @@ async function loadWater(area: AreaContext, signal?: AbortSignal): Promise<Featu
   };
 }
 
+async function loadSatelliteImagery(): Promise<FeatureCollection> {
+  return EMPTY_FC;
+}
+
 // ── Atmospheric ───────────────────────────────────────────────────────────────
 
 async function loadWeather(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
@@ -317,6 +321,7 @@ async function loadSatellites(area: AreaContext, signal?: AbortSignal): Promise<
 export const SOURCES: DataSource[] = [
   // Base
   { id: "terrain",          label: "Topography",     sublabel: "Elevation · DEM",          category: "base",           hasData: false, load: loadTerrain },
+  { id: "satellite_imagery", label: "Satellite",      sublabel: "MapTiler imagery",         category: "base",           hasData: false, load: loadSatelliteImagery },
   { id: "landcover",        label: "Land Type",       sublabel: "Surface classification",   category: "base",           hasData: false, load: loadLandcover },
   { id: "forest",           label: "Forest Cover",    sublabel: "Canopy density",           category: "base",           hasData: false, load: loadForest },
   { id: "water",            label: "Water",           sublabel: "Lakes · Rivers",           category: "base",           hasData: false, load: loadWater },
