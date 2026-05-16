@@ -1,7 +1,7 @@
 data/*
 # !!! ALWAYS COMMIT THESE — challenge test areas must stay in git !!!
-#!data/test_archipelago_sea/
-#!data/test_north_karelia/
-#!data/test_lapland_kasivarsi/
+!data/test_archipelago_sea/
+!data/test_north_karelia/
+!data/test_lapland_kasivarsi/
 .env
 *.egg-info/
