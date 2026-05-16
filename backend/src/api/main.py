@@ -3,6 +3,11 @@
 All data fetching goes through src/jobs/orchestrator.py.
 Layer data is stored in Redis and served per-layer to keep responses small.
 """
+from dotenv import load_dotenv
+from src.service.mml_data import fetch_mml_collections
+
+# Load environment variables
+load_dotenv()
 
 from contextlib import asynccontextmanager
 
@@ -160,3 +165,7 @@ async def layer_data(job_id: str, layer_name: str) -> dict:
         raise HTTPException(status_code=404, detail=f"Layer '{layer_name}' data not found in store")
 
     return layer
+@app.get("/terrain/mml/collections")
+async def get_mml_collections() -> dict:
+    """Returns the available topographic data collections from Maanmittauslaitos"""
+    return await fetch_mml_collections()
