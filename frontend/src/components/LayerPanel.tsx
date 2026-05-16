@@ -153,12 +153,12 @@ function LandcoverLegend() {
 
 function TerrainLegend() {
   const items = [
-    ["0 m", "#1e3a1e"],
-    ["30 m", "#2e5c1e"],
-    ["80 m", "#4a8020"],
-    ["150 m", "#7aa840"],
-    ["250 m", "#a0b860"],
-    ["400 m+", "#c8c880"],
+    ["0 m",    "#ffffff"],
+    ["30 m",   "#ffd0c0"],
+    ["80 m",   "#ff9070"],
+    ["150 m",  "#ff5830"],
+    ["250 m",  "#cc2010"],
+    ["400 m+", "#7a0000"],
   ] as const;
 
   return (

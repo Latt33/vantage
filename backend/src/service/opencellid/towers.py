@@ -157,11 +157,11 @@ async def fetch_towers(aoi_id: str, bbox: BBox) -> dict:
 
     except Exception as exc:
         logger.warning("OpenCelliD fetch error: %s", exc)
-        category_file(aoi_id, "cellular", "towers.geojson").unlink(missing_ok=True)
+        write_json(category_file(aoi_id, "cellular", "towers.geojson"), {"type": "FeatureCollection", "features": []})
         write_category_meta(
             aoi_id, "cellular",
             source="OpenCelliD",
             confidence="low",
-            feature_counts={},
+            feature_counts={"towers": 0},
         )
         return {"source": "OpenCelliD", "error": str(exc)}

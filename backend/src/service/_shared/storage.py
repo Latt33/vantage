@@ -16,6 +16,7 @@ Nothing in this module knows about Redis or HTTP. It is pure filesystem I/O.
 
 import json
 import math
+import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -93,6 +94,12 @@ def create_aoi(aoi_id: str, bbox: dict) -> None:
 
 def get_aoi_meta(aoi_id: str) -> dict | None:
     return read_json(aoi_root(aoi_id) / "meta.json")
+
+
+def delete_aoi(aoi_id: str) -> None:
+    root = aoi_root(aoi_id)
+    if root.exists():
+        shutil.rmtree(root)
 
 
 def list_aois() -> list[dict]:

@@ -59,12 +59,15 @@ Frontend should treat each typed endpoint as the stable contract for one data pr
 ## DEM (NLS WCS)
 
 - Endpoint: `GET /api/aoi/{aoi_id}/dem/elevation`
-- File: `dem/elevation.tiff`
-- Shape: GeoTIFF raster (EPSG:3067 source product)
+- File: `dem/elevation.parquet`
+- Shape: Parquet grid (WGS84) — points with `lon`, `lat`, `elevation_m` (derived from NLS GeoTIFF)
 
 - Endpoint: `GET /api/aoi/{aoi_id}/dem/elevation.png`
 - File: `dem/elevation.png`
-- Shape: Cropped raster overlay PNG in WGS84 for map rendering
+- Shape: Cropped raster overlay PNG in WGS84 for fast map rendering (colorized elevation)
+
+Note: the backend fetches the NLS WCS GeoTIFF (EPSG:3067) and converts it to the Parquet grid
+and a cropped PNG overlay for efficient serving and client-side rendering.
 
 ## Satellites (N2YO)
 

@@ -276,12 +276,6 @@ async function loadInfraRoads(area: AreaContext, signal?: AbortSignal): Promise<
   return asFeatureCollection(raw);
 }
 
-async function loadRail(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
-  const aoiId = getBackendAoiId(area);
-  const raw = await fetchJson(`/api/aoi/${aoiId}/infrastructure/rail`, signal);
-  return asFeatureCollection(raw);
-}
-
 async function loadTrafficCameras(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
   const aoiId = getBackendAoiId(area);
   const raw = await fetchJson(`/api/aoi/${aoiId}/traffic_cameras/stations`, signal);
@@ -342,7 +336,6 @@ export const SOURCES: DataSource[] = [
   { id: "weather",          label: "Weather",         sublabel: "ECMWF forecast grid",      category: "atmospheric",    hasData: false, load: loadWeather },
   // Infrastructure
   { id: "infra_roads",      label: "Roads",           sublabel: "Highway network",          category: "infrastructure", hasData: false, load: loadInfraRoads },
-  { id: "infra_rail",       label: "Railways",        sublabel: "Track · Junctions",        category: "infrastructure", hasData: false, load: loadRail },
   // Surveillance
   { id: "cellular",         label: "Cell Towers",     sublabel: "RF coverage · Relays",     category: "surveillance",   hasData: false, load: loadCellular },
   { id: "traffic_cameras",   label: "Road Cameras",    sublabel: "Live weather cameras",     category: "surveillance",   hasData: false, load: loadTrafficCameras },

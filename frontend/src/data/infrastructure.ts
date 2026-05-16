@@ -17,11 +17,6 @@ export const INFRASTRUCTURE: InfraNode[] = [
     sublabel: "Highways · Local roads",
   },
   {
-    id: "rail",
-    label: "Railways",
-    sublabel: "Track · Yards · Junctions",
-  },
-  {
     id: "towers",
     label: "Cell Towers",
     sublabel: "Cell & comms sites",

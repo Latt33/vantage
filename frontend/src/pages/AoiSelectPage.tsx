@@ -42,6 +42,7 @@ export default function AoiSelectPage() {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [bbox, setBbox] = useState<BoundingBox | null>(null);
+  const [deletingAoiId, setDeletingAoiId] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const {
@@ -288,6 +289,11 @@ export default function AoiSelectPage() {
   function handleProceed() {
     if (!bbox) return;
     sessionStorage.setItem("aoi", JSON.stringify(bbox));
+    if (selectedAoiId) {
+      sessionStorage.setItem("aoi_id", selectedAoiId);
+    } else {
+      sessionStorage.removeItem("aoi_id");
+    }
     setArea(bboxToArea(bbox));
     navigate("/capabilities");
   }
@@ -295,6 +301,28 @@ export default function AoiSelectPage() {
   function handleLogout() {
     sessionStorage.clear();
     navigate("/login");
+  }
+
+  async function handleDeleteExisting(aoi: any) {
+    if (!window.confirm("Delete this saved area and all stored data?")) return;
+    setDeletingAoiId(aoi.aoi_id);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/aoi/${aoi.aoi_id}`, { method: "DELETE" });
+      if (!res.ok) {
+        throw new Error(`request failed (${res.status})`);
+      }
+      setExistingAois((prev) => prev.filter((item) => item.aoi_id !== aoi.aoi_id));
+      if (selectedAoiId === aoi.aoi_id) {
+        setBbox(null);
+        setSelectedAoiId(null);
+        sessionStorage.removeItem("aoi");
+        sessionStorage.removeItem("aoi_id");
+      }
+    } catch (error) {
+      console.error("Failed to delete AOI", error);
+    } finally {
+      setDeletingAoiId(null);
+    }
   }
 
   function handleCancel() {
@@ -391,28 +419,55 @@ export default function AoiSelectPage() {
                   month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' 
                 });
                 return (
-                  <button
+                  <div
                     key={aoi.aoi_id}
-                    onClick={() => handleSelectExisting(aoi)}
                     style={{
-                      background: selectedAoiId === aoi.aoi_id ? "rgba(232, 98, 42, 0.15)" : "rgba(255,255,255,0.03)",
-                      border: `1px solid ${selectedAoiId === aoi.aoi_id ? "var(--color-accent-orange)" : "var(--color-border-subtle)"}`,
-                      padding: "6px 10px",
-                      textAlign: "left",
-                      cursor: "pointer",
                       display: "flex",
-                      flexDirection: "column",
-                      gap: 2,
-                      borderRadius: 2,
+                      gap: 6,
                     }}
                   >
-                    <div style={{ fontFamily: "var(--font-heading)", fontSize: 11, color: "var(--color-text-primary)" }}>
-                      Area {idx + 1}
-                    </div>
-                    <div style={{ fontFamily: "var(--font-data)", fontSize: 9, color: "var(--color-text-dim)" }}>
-                      {date}
-                    </div>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectExisting(aoi)}
+                      style={{
+                        flex: 1,
+                        background: selectedAoiId === aoi.aoi_id ? "rgba(232, 98, 42, 0.15)" : "rgba(255,255,255,0.03)",
+                        border: `1px solid ${selectedAoiId === aoi.aoi_id ? "var(--color-accent-orange)" : "var(--color-border-subtle)"}`,
+                        padding: "6px 10px",
+                        textAlign: "left",
+                        cursor: "pointer",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 2,
+                        borderRadius: 2,
+                      }}
+                    >
+                      <div style={{ fontFamily: "var(--font-heading)", fontSize: 11, color: "var(--color-text-primary)" }}>
+                        Area {idx + 1}
+                      </div>
+                      <div style={{ fontFamily: "var(--font-data)", fontSize: 9, color: "var(--color-text-dim)" }}>
+                        {date}
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteExisting(aoi)}
+                      disabled={deletingAoiId === aoi.aoi_id}
+                      aria-label={`Delete Area ${idx + 1}`}
+                      style={{
+                        minWidth: 34,
+                        background: "rgba(255,255,255,0.03)",
+                        border: "1px solid var(--color-border-subtle)",
+                        borderRadius: 2,
+                        color: "var(--color-text-secondary)",
+                        cursor: "pointer",
+                        fontFamily: "var(--font-heading)",
+                        fontSize: 12,
+                      }}
+                    >
+                      {deletingAoiId === aoi.aoi_id ? "…" : "✕"}
+                    </button>
+                  </div>
                 );
               })}
             </div>

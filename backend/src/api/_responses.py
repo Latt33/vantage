@@ -49,6 +49,14 @@ def serve_layer_file(aoi_id: str, category: str, filename: str) -> FileResponse:
         media_type = "application/geo+json"
     elif suffix in (".tif", ".tiff"):
         media_type = "image/tiff"
+    elif suffix in (".png", ".jpg", ".jpeg", ".webp"):
+        # Common web image types served as-is
+        if suffix == ".png":
+            media_type = "image/png"
+        elif suffix == ".webp":
+            media_type = "image/webp"
+        else:
+            media_type = "image/jpeg"
     elif suffix == ".osm":
         media_type = "application/xml"
     else:

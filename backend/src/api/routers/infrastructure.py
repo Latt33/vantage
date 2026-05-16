@@ -12,9 +12,3 @@ router = APIRouter(prefix="/api/aoi/{aoi_id}/infrastructure", tags=["infrastruct
 async def get_roads(aoi_id: str) -> FileResponse:
     """Road network."""
     return serve_layer_file(aoi_id, "infrastructure", "roads.geojson")
-
-
-@router.get("/rail", response_class=FileResponse)
-async def get_rail(aoi_id: str) -> FileResponse:
-    """Rail network from OpenStreetMap Overpass data."""
-    return serve_osm_as_geojson(aoi_id, "rail", "rail.osm", tag_filter={"railway": None})

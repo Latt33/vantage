@@ -15,6 +15,7 @@ import MissionWindowModal, {
 } from "../components/MissionWindowModal";
 import TrafficCameraModal, { TrafficCameraStationDetail } from "../components/TrafficCameraModal";
 import ExportIpbReportModal, { ExportLegendState } from "../export/ExportIpbReportModal";
+import { cache } from "../registry/cache";
 import { SOURCES, loadSource } from "../sources";
 import { analysesForCapabilities } from "../analyses";
 import { fetchNextOverpass } from "../api/satelliteIntel";
@@ -26,7 +27,6 @@ const SOURCE_ACCENTS: Record<string, string> = {
   water:       "#2a6db5",
   weather:     "#2a6db5",
   infra_roads: "#a8a8a0",
-  infra_rail:  "#d47c2f",
   cellular:    "#2a9d8a",
   traffic_cameras: "#e8622a",
   satellites:  "#8060c8",
@@ -191,7 +191,6 @@ const MAP_SOURCE_IDS: Record<string, string> = {
   weather:     "natural-weather-src",
   terrain:     "dem-terrain-src",
   infra_roads: "infra-roads-src",
-  infra_rail:  "infra-rail-src",
   cellular:    "cellular-src",
   traffic_cameras: "traffic-cameras-src",
   satellites:  "satellites-src",
@@ -203,24 +202,24 @@ const MAP_LAYER_IDS: Record<string, string[]> = {
   forest:      ["natural-forest-raster"],
   water:       ["natural-water-fill", "natural-water-line"],
   weather:     ["natural-weather-wind-arrows"],
-  terrain:     ["dem-terrain-fill"],
+  terrain:     ["dem-terrain-raster"],
   infra_roads: ["infra-roads-line"],
-  infra_rail:  ["infra-rail-line"],
   cellular:    ["cellular-halo", "cellular-circle"],
   traffic_cameras: ["traffic-camera-symbol"],
   satellites:  ["satellites-track-line", "satellites-box-fill"],
 };
 
-const MAP_LAYER_OPACITY_PROP: Record<string, "fill-opacity" | "line-opacity" | "circle-opacity" | "icon-opacity" | "text-opacity"> = {
+const MAP_LAYER_OPACITY_PROP: Record<string, "fill-opacity" | "line-opacity" | "circle-opacity" | "icon-opacity" | "text-opacity" | "raster-opacity"> = {
   "natural-landcover-fill": "fill-opacity",
   "natural-landcover-line": "line-opacity",
   "natural-forest-fill":    "fill-opacity",
+  "natural-landcover-raster": "raster-opacity",
+  "natural-forest-raster":    "raster-opacity",
   "natural-water-fill":     "fill-opacity",
   "natural-water-line":     "line-opacity",
   "natural-weather-wind-arrows": "text-opacity",
-  "dem-terrain-fill":       "fill-opacity",
+  "dem-terrain-raster":     "raster-opacity",
   "infra-roads-line":       "line-opacity",
-  "infra-rail-line":        "line-opacity",
   "cellular-halo":          "circle-opacity",
   "cellular-circle":        "circle-opacity",
   "traffic-camera-symbol":  "icon-opacity",
@@ -246,7 +245,6 @@ const SOURCE_STAGE: Record<string, string> = {
   weather:     "weather",
   terrain:     "dem",
   infra_roads: "infrastructure",
-  infra_rail:  "rail",
   cellular:    "cellular",
   traffic_cameras: "traffic_cameras",
   satellites:  "satellites",
@@ -263,6 +261,39 @@ function loadAoi(): BoundingBox | null {
   } catch {
     return null;
   }
+}
+
+function loadAoiId(): string | null {
+  try {
+    const aoiId = sessionStorage.getItem("aoi_id");
+    return aoiId && aoiId.trim() ? aoiId : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildCompletedStages(): Record<string, string> {
+  const stageNames = Array.from(new Set(Object.values(SOURCE_STAGE)));
+  return Object.fromEntries(stageNames.map((stageName) => [stageName, "done"])) as Record<string, string>;
+}
+
+function buildPendingStages(): Record<string, string> {
+  const stageNames = Array.from(new Set(Object.values(SOURCE_STAGE)));
+  return Object.fromEntries(stageNames.map((stageName) => [stageName, "pending"])) as Record<string, string>;
+}
+
+function createEmptySourceData(): Record<string, FeatureCollection> {
+  return {
+    landcover: EMPTY_FC,
+    forest: EMPTY_FC,
+    water: EMPTY_FC,
+    weather: EMPTY_FC,
+    terrain: EMPTY_FC,
+    infra_roads: EMPTY_FC,
+    cellular: EMPTY_FC,
+    traffic_cameras: EMPTY_FC,
+    satellites: EMPTY_FC,
+  };
 }
 
 function loadCapabilities(): Capability[] {
@@ -285,6 +316,7 @@ function bboxLabel(b: BoundingBox): string {
 export default function OperationsPage() {
   const navigate = useNavigate();
   const aoi = useMemo(() => loadAoi(), []);
+  const persistedAoiId = useMemo(() => loadAoiId(), []);
   const capabilities = useMemo(() => loadCapabilities(), []);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -304,22 +336,12 @@ export default function OperationsPage() {
   const [cameraDetail, setCameraDetail] = useState<TrafficCameraStationDetail | null>(null);
   const [cameraLoading, setCameraLoading] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [refreshingAoi, setRefreshingAoi] = useState(false);
 
   const [jobInfo, setJobInfo] = useState<JobInfo | null>(null);
-  const [stages, setStages] = useState<Record<string, string>>({});
+  const [stages, setStages] = useState<Record<string, string>>(() => (persistedAoiId ? buildCompletedStages() : {}));
   const loadedSources = useRef<Set<string>>(new Set());
-  const [sourceData, setSourceData] = useState<Record<string, FeatureCollection>>({
-    landcover:   EMPTY_FC,
-    forest:      EMPTY_FC,
-    water:       EMPTY_FC,
-    weather:     EMPTY_FC,
-    terrain:     EMPTY_FC,
-    infra_roads: EMPTY_FC,
-    infra_rail:  EMPTY_FC,
-    cellular:    EMPTY_FC,
-    traffic_cameras: EMPTY_FC,
-    satellites:  EMPTY_FC,
-  });
+  const [sourceData, setSourceData] = useState<Record<string, FeatureCollection>>(createEmptySourceData);
 
   const capabilityIds = useMemo(() => capabilities.map((c) => c.id), [capabilities]);
   const availableAnalyses = useMemo(() => analysesForCapabilities(capabilityIds), [capabilityIds]);
@@ -341,13 +363,16 @@ export default function OperationsPage() {
     [availableAnalyses, analysisLayers],
   );
 
+  const activeAoiId = jobInfo?.aoiId ?? persistedAoiId;
+  const rasterVersion = jobInfo?.jobId ?? activeAoiId;
+
   const sourceArea = useMemo(() => {
-    if (!aoi || !jobInfo) return null;
+    if (!aoi || !activeAoiId) return null;
     return {
       ...bboxToArea(aoi),
-      metadata: { aoi_id: jobInfo.aoiId },
+      metadata: { aoi_id: activeAoiId },
     };
-  }, [aoi, jobInfo]);
+  }, [aoi, activeAoiId]);
 
   const satelliteDisplayData = useMemo(
     () => buildSatelliteDisplayData(sourceData.satellites, aoi, timelineOffsetHours),
@@ -398,7 +423,6 @@ export default function OperationsPage() {
   // Mapping from infra node id -> source id in SOURCES (if implemented)
   const INFRA_TO_SOURCE: Record<string, string | undefined> = {
     roads: "infra_roads",
-    rail: "infra_rail",
     towers: "cellular",
   };
 
@@ -483,11 +507,22 @@ export default function OperationsPage() {
       navigate("/aoi", { replace: true });
       return;
     }
-    setArea(bboxToArea(aoi));
-  }, [aoi, navigate]);
+    setArea({
+      ...bboxToArea(aoi),
+      metadata: persistedAoiId ? { aoi_id: persistedAoiId } : {},
+    });
+  }, [aoi, navigate, persistedAoiId]);
 
   useEffect(() => {
-    if (!aoi || jobInfo) return;
+    if (!jobInfo) return;
+    loadedSources.current.clear();
+    cache.invalidate();
+    setSourceData(createEmptySourceData());
+    setStages(buildPendingStages());
+  }, [jobInfo?.jobId]);
+
+  useEffect(() => {
+    if (!aoi || jobInfo || persistedAoiId) return;
     const bbox = aoi;
     const controller = new AbortController();
 
@@ -515,7 +550,7 @@ export default function OperationsPage() {
 
     startJob();
     return () => controller.abort();
-  }, [aoi, jobInfo]);
+  }, [aoi, jobInfo, persistedAoiId]);
 
   useEffect(() => {
     if (!jobInfo) return;
@@ -547,13 +582,39 @@ export default function OperationsPage() {
     };
   }, [jobInfo]);
 
-  // When a job starts, immediately mark all tracked sources as loading
+  // When a job starts, immediately mark all tracked sources as loading.
+  // Reopened saved AOIs reuse existing data and skip this transition.
   useEffect(() => {
     if (!jobInfo) return;
     setLayers((prev) =>
       prev.map((l) => (SOURCE_STAGE[l.id] ? { ...l, loadState: "loading" as const } : l))
     );
   }, [jobInfo]);
+
+  async function refetchCurrentAoi() {
+    if (!activeAoiId || !aoi || refreshingAoi) return;
+    setRefreshingAoi(true);
+    try {
+      cache.invalidate();
+      loadedSources.current.clear();
+      setSourceData(createEmptySourceData());
+      setStages(buildPendingStages());
+
+      const res = await fetch(`${API_BASE_URL}/api/aoi/${activeAoiId}/refresh`, { method: "POST" });
+      if (!res.ok) {
+        throw new Error(`request failed (${res.status})`);
+      }
+      const payload = await res.json();
+      if (!payload?.aoi_id || !payload?.job_id) {
+        throw new Error("missing refresh job response");
+      }
+      setJobInfo({ aoiId: payload.aoi_id, jobId: payload.job_id });
+    } catch (error) {
+      console.error("Failed to refetch AOI data", error);
+    } finally {
+      setRefreshingAoi(false);
+    }
+  }
 
   useEffect(() => {
     if (!containerRef.current || !aoi) return;
@@ -644,12 +705,12 @@ export default function OperationsPage() {
           ],
           "circle-color": [
             "interpolate", ["linear"], ["coalesce", ["get", "elevation_m"], 0],
-            0,   "#1e3a1e",
-            30,  "#2e5c1e",
-            80,  "#4a8020",
-            150, "#7aa840",
-            250, "#a0b860",
-            400, "#c8c880",
+            0,   "#ffffff",
+            30,  "#ffd0c0",
+            80,  "#ff9070",
+            150, "#ff5830",
+            250, "#cc2010",
+            400, "#7a0000",
           ],
           "circle-opacity": 0.86,
           "circle-stroke-color": "rgba(0,0,0,0.15)",
@@ -725,35 +786,6 @@ export default function OperationsPage() {
             20000, 3.5,
           ],
           "line-opacity": 0.9,
-        },
-      });
-
-      map.addSource(MAP_SOURCE_IDS.infra_rail, { type: "geojson", data: EMPTY_FC });
-      map.addLayer({
-        id: "infra-rail-line",
-        type: "line",
-        source: MAP_SOURCE_IDS.infra_rail,
-        layout: { visibility: "none" },
-        paint: {
-          "line-color": [
-            "match",
-            ["coalesce", ["get", "railway"], "other"],
-            "rail", "#e0c56b",
-            "light_rail", "#f2b134",
-            "subway", "#c07db0",
-            "tram", "#d47c2f",
-            "abandoned", "#8a8a8a",
-            "other", "#d47c2f",
-            "#d47c2f",
-          ],
-          "line-width": [
-            "interpolate", ["linear"], ["zoom"],
-            7, 1,
-            10, 1.6,
-            13, 2.4,
-            16, 3.2,
-          ],
-          "line-opacity": 0.92,
         },
       });
 
@@ -880,7 +912,7 @@ export default function OperationsPage() {
   }, [mapReady, satelliteDisplayData, sourceData]);
 
   useEffect(() => {
-    if (!mapReady || !aoi || !jobInfo) return;
+    if (!mapReady || !aoi || !activeAoiId || !rasterVersion) return;
     if (stages.land !== "done") return;
 
     const map = mapRef.current;
@@ -888,7 +920,7 @@ export default function OperationsPage() {
 
     const sourceId = MAP_SOURCE_IDS.forest;
     const layerId = "natural-forest-raster";
-    const imageUrl = `${API_BASE_URL}/api/aoi/${jobInfo.aoiId}/land/forest.png?v=${encodeURIComponent(jobInfo.jobId)}`;
+    const imageUrl = `${API_BASE_URL}/api/aoi/${activeAoiId}/land/forest.png?v=${encodeURIComponent(rasterVersion)}`;
     const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
       [aoi.minLon, aoi.maxLat],
       [aoi.maxLon, aoi.maxLat],
@@ -912,16 +944,16 @@ export default function OperationsPage() {
       id: layerId,
       type: "raster",
       source: sourceId,
-      layout: { visibility: layers.find((layer) => layer.id === "forest")?.visible ? "visible" : "none" },
+      layout: { visibility: "none" },
       paint: {
         "raster-opacity": 0.72,
         "raster-resampling": "nearest",
       },
     });
-  }, [aoi, jobInfo, mapReady, stages.land, layers]);
+  }, [aoi, activeAoiId, rasterVersion, mapReady, stages.land]);
 
   useEffect(() => {
-    if (!mapReady || !aoi || !jobInfo) return;
+    if (!mapReady || !aoi || !activeAoiId || !rasterVersion) return;
     if (stages.land !== "done") return;
 
     const map = mapRef.current;
@@ -929,7 +961,7 @@ export default function OperationsPage() {
 
     const sourceId = MAP_SOURCE_IDS.landcover;
     const layerId = "natural-landcover-raster";
-    const imageUrl = `${API_BASE_URL}/api/aoi/${jobInfo.aoiId}/land/cover.png?v=${encodeURIComponent(jobInfo.jobId)}`;
+    const imageUrl = `${API_BASE_URL}/api/aoi/${activeAoiId}/land/cover.png?v=${encodeURIComponent(rasterVersion)}`;
     const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
       [aoi.minLon, aoi.maxLat],
       [aoi.maxLon, aoi.maxLat],
@@ -953,16 +985,16 @@ export default function OperationsPage() {
       id: layerId,
       type: "raster",
       source: sourceId,
-      layout: { visibility: layers.find((layer) => layer.id === "landcover")?.visible ? "visible" : "none" },
+      layout: { visibility: "none" },
       paint: {
         "raster-opacity": 0.82,
         "raster-resampling": "nearest",
       },
     });
-  }, [aoi, jobInfo, mapReady, stages.land, layers]);
+  }, [aoi, activeAoiId, rasterVersion, mapReady, stages.land]);
 
   useEffect(() => {
-    if (!mapReady || !aoi || !jobInfo) return;
+    if (!mapReady || !aoi || !activeAoiId || !rasterVersion) return;
     if (stages.dem !== "done") return;
 
     const map = mapRef.current;
@@ -971,7 +1003,7 @@ export default function OperationsPage() {
     const sourceId = MAP_SOURCE_IDS.terrain;
     const layerId = "dem-terrain-raster";
     const placeholderLayerId = "dem-terrain-circle";
-    const imageUrl = `${API_BASE_URL}/api/aoi/${jobInfo.aoiId}/dem/elevation.png?v=${encodeURIComponent(jobInfo.jobId)}`;
+    const imageUrl = `${API_BASE_URL}/api/aoi/${activeAoiId}/dem/elevation.png?v=${encodeURIComponent(rasterVersion)}`;
     const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
       [aoi.minLon, aoi.maxLat],
       [aoi.maxLon, aoi.maxLat],
@@ -1004,7 +1036,7 @@ export default function OperationsPage() {
         "raster-resampling": "nearest",
       },
     });
-  }, [aoi, jobInfo, mapReady, stages.dem]);
+  }, [aoi, activeAoiId, rasterVersion, mapReady, stages.dem]);
 
   // Sync layer visibility + opacity into MapLibre
   useEffect(() => {
@@ -1191,11 +1223,9 @@ export default function OperationsPage() {
   const infraEnabled = useMemo(() => new Set(Object.keys(INFRA_TO_SOURCE).filter(k => typeof INFRA_TO_SOURCE[k] !== "undefined")), []);
   const infraStatusById = useMemo(() => {
     const roads = layers.find((layer) => layer.id === "infra_roads");
-    const rail = layers.find((layer) => layer.id === "infra_rail");
     const towers = layers.find((layer) => layer.id === "cellular");
     return {
       roads: { loadState: roads?.loadState, hasData: roads?.hasData },
-      rail: { loadState: rail?.loadState, hasData: rail?.hasData },
       towers: { loadState: towers?.loadState, hasData: towers?.hasData },
     };
   }, [layers]);
@@ -1262,6 +1292,8 @@ export default function OperationsPage() {
         capabilitiesCount={capabilities.length}
         onBack={() => navigate("/capabilities")}
         onNewMission={newMission}
+        onRefetch={refetchCurrentAoi}
+        refetching={refreshingAoi}
       />
 
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
@@ -1444,9 +1476,11 @@ interface TopBarProps {
   capabilitiesCount: number;
   onBack: () => void;
   onNewMission: () => void;
+  onRefetch: () => void;
+  refetching: boolean;
 }
 
-function TopBar({ bbox, layersActive, capabilitiesCount, onBack, onNewMission }: TopBarProps) {
+function TopBar({ bbox, layersActive, capabilitiesCount, onBack, onNewMission, onRefetch, refetching }: TopBarProps) {
   return (
     <div
       style={{
@@ -1466,6 +1500,9 @@ function TopBar({ bbox, layersActive, capabilitiesCount, onBack, onNewMission }:
         </button>
         <button className="btn" onClick={onNewMission}>
           ⟳ New Mission
+        </button>
+        <button className="btn" onClick={onRefetch} disabled={refetching}>
+          {refetching ? "Refetching…" : "Refetch Data"}
         </button>
       </div>
 

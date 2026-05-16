@@ -3,7 +3,10 @@
     "allow": [
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\attel\\\\Desktop\\\\hackathons\\\\defence\\\\backend\\\\src\\\\service\" -Recurse -Name)",
       "Bash(npx tsc *)",
-      "WebFetch(domain:avoin-karttakuva.maanmittauslaitos.fi)"
+      "WebFetch(domain:avoin-karttakuva.maanmittauslaitos.fi)",
+      "PowerShell(Get-ChildItem \"c:/Users/attel/Desktop/hackathons/defence/backend/data\" -Directory | ForEach-Object { $landMeta = Join-Path $_.FullName \"land\\\\meta.json\"; if \\(Test-Path $landMeta\\) { Remove-Item $landMeta -Force; Write-Host \"Removed $landMeta\" } })",
+      "Bash(docker compose *)",
+      "Bash(Remove-Item \"c:\\\\Users\\\\attel\\\\Desktop\\\\hackathons\\\\defence\\\\backend\\\\src\\\\service\\\\osm\\\\rail.py\")"
     ]
   }
 }
