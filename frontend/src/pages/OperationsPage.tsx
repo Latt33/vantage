@@ -1278,6 +1278,7 @@ export default function OperationsPage() {
 
         <div style={{ flex: 1, position: "relative" }}>
           <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
+          <MapLegend layers={layers} />
         </div>
 
         <LayerPanel
@@ -1420,6 +1421,77 @@ function createTrafficCameraIcon(): ImageData {
   ctx.fill();
 
   return ctx.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+// ── Map legend overlay ────────────────────────────────────────────────────────
+
+const LAND_LEGEND: { label: string; color: string }[] = [
+  { label: "Forest",    color: "rgb(42, 122, 42)" },
+  { label: "Built-up",  color: "rgb(139, 90, 43)" },
+  { label: "Water",     color: "rgb(42, 109, 181)" },
+  { label: "Wetland",   color: "rgb(79, 127, 91)" },
+  { label: "Open Land", color: "rgb(168, 184, 95)" },
+  { label: "Rock",      color: "rgb(122, 122, 122)" },
+];
+
+function MapLegend({ layers }: { layers: LayerConfig[] }) {
+  const landcoverOn = layers.some((l) => l.id === "landcover" && l.visible);
+  const forestOn    = layers.some((l) => l.id === "forest"    && l.visible);
+  if (!landcoverOn && !forestOn) return null;
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        bottom: 36,
+        right: 12,
+        background: "rgba(14, 16, 20, 0.88)",
+        border: "1px solid rgba(255,255,255,0.10)",
+        borderRadius: 6,
+        padding: "8px 10px",
+        fontFamily: "var(--font-data)",
+        fontSize: 11,
+        color: "var(--color-text-secondary)",
+        pointerEvents: "none",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        minWidth: 128,
+      }}
+    >
+      {landcoverOn && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--color-text-dim)", marginBottom: 5 }}>
+            Land Type
+          </div>
+          {LAND_LEGEND.map(({ label, color }) => (
+            <div key={label} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+              <div style={{ width: 11, height: 11, borderRadius: 2, background: color, flexShrink: 0, opacity: 0.85 }} />
+              <span>{label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {forestOn && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--color-text-dim)", marginBottom: 5 }}>
+            Forest Density
+          </div>
+          <div style={{
+            height: 10,
+            borderRadius: 3,
+            background: "linear-gradient(to right, rgb(200,190,40), rgb(100,160,35), rgb(15,60,10))",
+            marginBottom: 4,
+          }} />
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
+            <span>Sparse</span>
+            <span>Dense</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function roundRect(
