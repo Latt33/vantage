@@ -224,6 +224,8 @@ function ForceRow({ capability, derivedSelected, derivedLoading, onDerivedToggle
             {capability.label}
           </div>
 
+          {capability.id === "towed_artillery" && <FiringDirectionField />}
+
           {hasDerived && (
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
               <button
@@ -310,6 +312,106 @@ function DerivedSpinner() {
       <style>{`@keyframes derived-spinner-rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </>
   );
+}
+
+/**
+ * Firing direction (azimuth) input in the Finnish 6000-mil (piiru) system.
+ *
+ * Accepts "HH-UU" where HH ∈ [00, 60] and UU ∈ [00, 99]. 00-00 → 0°,
+ * 60-00 → 360°. Echoes the equivalent degrees below the field so the
+ * operator can sanity-check the input.
+ */
+function FiringDirectionField() {
+  const [raw, setRaw] = useState("");
+  const [touched, setTouched] = useState(false);
+
+  const parsed = parseMils6000(raw);
+  const valid = !touched || raw.trim() === "" || parsed !== null;
+  const degrees = parsed === null ? null : (parsed / 6000) * 360;
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        marginTop: 6,
+        padding: "6px 8px",
+        border: "1px solid var(--color-border-subtle)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+        }}
+      >
+        <span
+          style={{
+            fontFamily: "var(--font-heading)",
+            fontSize: 9,
+            fontWeight: 600,
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            color: "var(--color-text-secondary)",
+          }}
+        >
+          Firing Direction
+        </span>
+        <input
+          type="text"
+          inputMode="numeric"
+          placeholder="00-00"
+          maxLength={5}
+          value={raw}
+          onChange={(e) => setRaw(e.target.value)}
+          onBlur={() => setTouched(true)}
+          aria-label="Firing direction in mils (6000-mil system)"
+          style={{
+            width: 64,
+            background: "transparent",
+            border: `1px solid ${valid ? "var(--color-border-default)" : "var(--color-status-crit)"}`,
+            color: "var(--color-text-primary)",
+            fontFamily: "var(--font-data)",
+            fontSize: 12,
+            textAlign: "center",
+            padding: "2px 4px",
+            outline: "none",
+          }}
+        />
+      </div>
+      <div
+        style={{
+          fontFamily: "var(--font-data)",
+          fontSize: 10,
+          color: valid ? "var(--color-text-dim)" : "var(--color-status-crit)",
+          minHeight: 12,
+        }}
+      >
+        {!valid
+          ? "Expected HH-UU between 00-00 and 60-00"
+          : degrees !== null
+            ? `≈ ${degrees.toFixed(1)}° · range 00-00 → 60-00`
+            : "Mils (6000-mil system) · 00-00 → 60-00 = 0° → 360°"}
+      </div>
+    </div>
+  );
+}
+
+function parseMils6000(input: string): number | null {
+  const trimmed = input.trim();
+  if (trimmed === "") return null;
+  // Accept "HH-UU" or "HHUU"; reject anything else.
+  const m = /^(\d{1,2})[-]?(\d{1,2})$/.exec(trimmed);
+  if (!m) return null;
+  const hundreds = parseInt(m[1], 10);
+  const units = parseInt(m[2], 10);
+  if (Number.isNaN(hundreds) || Number.isNaN(units)) return null;
+  const mils = hundreds * 100 + units;
+  if (mils < 0 || mils > 6000) return null;
+  return mils;
 }
 
 function ExportButton({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) {

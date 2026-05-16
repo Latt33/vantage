@@ -21,6 +21,7 @@ import pandas as pd
 BACKUP_PROFILE_PATH = Path(__file__).resolve().parents[3] / "data_backup" / "weather_profile.json"
 _LOCAL_TZ = ZoneInfo("Europe/Helsinki")
 _PROFILE_HOURS = 72
+_PROFILE_VERSION = 3
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:
@@ -35,10 +36,24 @@ def generate_demo_weather_profile(hours: int = _PROFILE_HOURS) -> dict:
         diurnal = math.sin(((hour_offset % 24) - 5) / 24 * math.tau)
         synoptic = math.sin(hour_offset / 8.0) + 0.55 * math.cos(hour_offset / 19.0)
 
-        wind_speed = _clamp(5.2 + 1.7 * synoptic + 0.9 * diurnal, 1.8, 10.8)
+        # Demo event: winds ramp up around +30h, peak by +40h, then
+        # gradually calm so FPV threat appears again later in the timeline.
+        high_wind_boost = 0.0
+        if 30 <= hour_offset <= 40:
+            phase = (hour_offset - 30.0) / 10.0
+            high_wind_boost = 6.0 + 1.8 * math.sin(math.pi * phase)
+        elif hour_offset > 40:
+            decay = min(1.0, (hour_offset - 40.0) / 14.0)
+            high_wind_boost = 6.0 * ((1.0 - decay) ** 2)
+
+        wind_speed = _clamp(5.2 + 1.7 * synoptic + 0.9 * diurnal + high_wind_boost, 1.8, 19.5)
         wind_dir = (228 + 26 * math.sin(hour_offset / 6.5) + 12 * math.cos(hour_offset / 17.0)) % 360
-        wind_gust = _clamp(wind_speed + 1.5 + 1.1 * (0.5 + 0.5 * math.sin(hour_offset / 4.2)), wind_speed + 0.8, 15.5)
-        wind_speed_120m = _clamp(wind_speed + 1.6 + 0.8 * math.cos(hour_offset / 7.5), 2.4, 13.2)
+        wind_gust = _clamp(
+            wind_speed + 1.5 + 1.1 * (0.5 + 0.5 * math.sin(hour_offset / 4.2)) + 0.45 * high_wind_boost,
+            wind_speed + 0.8,
+            24.0,
+        )
+        wind_speed_120m = _clamp(wind_speed + 1.6 + 0.8 * math.cos(hour_offset / 7.5) + 0.35 * high_wind_boost, 2.4, 22.0)
         wind_dir_120m = (wind_dir + 8 + 5 * math.sin(hour_offset / 9.0)) % 360
 
         temperature = _clamp(8.5 + 6.3 * diurnal + 1.8 * math.cos(hour_offset / 20.0), -3.0, 21.0)
@@ -98,6 +113,7 @@ def generate_demo_weather_profile(hours: int = _PROFILE_HOURS) -> dict:
         })
 
     return {
+        "profile_version": _PROFILE_VERSION,
         "timezone": "Europe/Helsinki",
         "hours": profile_hours,
     }
@@ -107,7 +123,14 @@ def load_or_create_backup_profile(path: Path = BACKUP_PROFILE_PATH) -> dict:
     """Load the persisted fallback profile or create it on first use."""
     if path.exists():
         with open(path, "r", encoding="utf-8") as handle:
-            return json.load(handle)
+            loaded = json.load(handle)
+        if (
+            isinstance(loaded, dict)
+            and int(loaded.get("profile_version", 0)) == _PROFILE_VERSION
+            and isinstance(loaded.get("hours"), list)
+            and len(loaded["hours"]) > 0
+        ):
+            return loaded
 
     profile = generate_demo_weather_profile()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,9 +157,23 @@ def build_backup_weather_dataframe(points: list[tuple[float, float]]) -> pd.Data
         for item in hours:
             hour_offset = int(item.get("hour_offset", 0))
             valid_time = (start_time + timedelta(hours=hour_offset)).isoformat()
-            wind_speed = _clamp(float(item["wind_speed_ms"]) * point_speed_factor, 1.0, 14.0)
-            wind_gust = _clamp(float(item["wind_gust_ms"]) * point_speed_factor, wind_speed + 0.5, 18.0)
-            wind_speed_120m = _clamp(float(item["wind_speed_120m_ms"]) * point_speed_factor, 1.5, 16.0)
+            wind_speed = _clamp(float(item["wind_speed_ms"]) * point_speed_factor, 1.0, 22.0)
+            wind_gust = _clamp(float(item["wind_gust_ms"]) * point_speed_factor, wind_speed + 0.5, 26.0)
+            wind_speed_120m = _clamp(float(item["wind_speed_120m_ms"]) * point_speed_factor, 1.5, 24.0)
+
+            # Keep the event deterministic: 30–40h is a hostile FPV period,
+            # then winds calm so threat can return.
+            if 30 <= hour_offset <= 40:
+                event_floor = max(15.2, 15.8 + 1.2 * math.sin((hour_offset - 30) / 10.0))
+                wind_speed = max(wind_speed, event_floor)
+                wind_gust = max(wind_gust, wind_speed + 2.0)
+                wind_speed_120m = max(wind_speed_120m, wind_speed + 1.0)
+            elif hour_offset > 40:
+                calm_cap = 11.4 + 0.8 * math.sin((hour_offset - 40) / 6.0)
+                wind_speed = min(wind_speed, calm_cap)
+                wind_gust = min(max(wind_gust, wind_speed + 0.8), wind_speed + 4.0)
+                wind_speed_120m = min(max(wind_speed_120m, wind_speed + 0.6), wind_speed + 3.0)
+
             temperature = _clamp(float(item["temperature_c"]) + point_temp_offset, -6.0, 24.0)
             apparent_temperature = _clamp(float(item["apparent_temperature_c"]) + point_temp_offset - 0.15, -8.0, 23.0)
             cloudcover = _clamp(float(item["cloudcover_pct"]) + point_cloud_offset, 0.0, 100.0)

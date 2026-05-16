@@ -63,11 +63,13 @@ const GRADIENT_NEUTRAL = "linear-gradient(to right, rgba(80,120,180,0.45) 0%, rg
 interface Props {
   open: boolean;
   initial: MissionConditionsUi;
+  /** When true, Apply was clicked and the parent is computing windows. */
+  analyzing?: boolean;
   onClose: () => void;
   onApply: (conditions: MissionConditionsUi) => void;
 }
 
-export default function MissionWindowModal({ open, initial, onClose, onApply }: Props) {
+export default function MissionWindowModal({ open, initial, analyzing = false, onClose, onApply }: Props) {
   const [cond, setCond] = useState<MissionConditionsUi>(initial);
 
   useEffect(() => {
@@ -86,8 +88,9 @@ export default function MissionWindowModal({ open, initial, onClose, onApply }: 
         display: "flex", alignItems: "center", justifyContent: "center",
         padding: 16,
       }}
-      onClick={onClose}
+      onClick={analyzing ? undefined : onClose}
     >
+      <style>{`@keyframes mwm-spin { to { transform: rotate(360deg); } }`}</style>
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
@@ -97,7 +100,7 @@ export default function MissionWindowModal({ open, initial, onClose, onApply }: 
           display: "flex", flexDirection: "column", overflow: "hidden",
         }}
       >
-        <ModalHeader onClose={onClose} />
+        <ModalHeader onClose={onClose} analyzing={analyzing} />
 
         <div
           style={{
@@ -254,8 +257,9 @@ export default function MissionWindowModal({ open, initial, onClose, onApply }: 
 
         <ModalFooter
           summary={summary}
+          analyzing={analyzing}
           onClose={onClose}
-          onApply={() => { onApply(cond); onClose(); }}
+          onApply={() => onApply(cond)}
         />
       </div>
     </div>
@@ -266,7 +270,7 @@ export default function MissionWindowModal({ open, initial, onClose, onApply }: 
 // Headers / footers / shared bits
 // ---------------------------------------------------------------------------
 
-function ModalHeader({ onClose }: { onClose: () => void }) {
+function ModalHeader({ onClose, analyzing }: { onClose: () => void; analyzing: boolean }) {
   return (
     <div style={{
       height: 40, flexShrink: 0, padding: "0 12px",
@@ -281,14 +285,14 @@ function ModalHeader({ onClose }: { onClose: () => void }) {
       }}>
         Mission Window Analysis
       </div>
-      <button className="btn" type="button" onClick={onClose}>✕ Close</button>
+      <button className="btn" type="button" onClick={onClose} disabled={analyzing}>✕ Close</button>
     </div>
   );
 }
 
 function ModalFooter({
-  summary, onClose, onApply,
-}: { summary: string[]; onClose: () => void; onApply: () => void }) {
+  summary, analyzing, onClose, onApply,
+}: { summary: string[]; analyzing: boolean; onClose: () => void; onApply: () => void }) {
   return (
     <div style={{
       minHeight: 56, flexShrink: 0, padding: "8px 12px",
@@ -297,7 +301,16 @@ function ModalFooter({
       background: "var(--color-bg-panel)",
     }}>
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {summary.length === 0 ? (
+        {analyzing ? (
+          <span style={{
+            fontFamily: "var(--font-data)", fontSize: 11,
+            color: "var(--color-accent-orange)",
+            display: "inline-flex", alignItems: "center", gap: 8,
+          }}>
+            <Spinner size={12} />
+            Searching the forecast for sufficient mission windows…
+          </span>
+        ) : summary.length === 0 ? (
           <span style={{ fontFamily: "var(--font-data)", fontSize: 11, color: "var(--color-text-dim)" }}>
             No active thresholds — enable at least one to constrain the search
           </span>
@@ -312,10 +325,47 @@ function ModalFooter({
         )}
       </div>
       <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-        <button className="btn" type="button" onClick={onClose}>Cancel</button>
-        <button className="btn btn--active" type="button" onClick={onApply}>Apply ▶</button>
+        <button className="btn" type="button" onClick={onClose} disabled={analyzing}>Cancel</button>
+        <button
+          className="btn btn--active"
+          type="button"
+          onClick={onApply}
+          disabled={analyzing}
+          style={{
+            minWidth: 96,
+            display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+            opacity: analyzing ? 0.85 : 1,
+            cursor: analyzing ? "wait" : "pointer",
+          }}
+        >
+          {analyzing ? (
+            <>
+              <Spinner size={12} />
+              Analyzing…
+            </>
+          ) : (
+            "Analyze ▶"
+          )}
+        </button>
       </div>
     </div>
+  );
+}
+
+function Spinner({ size = 14 }: { size?: number }) {
+  return (
+    <span
+      aria-label="Loading"
+      style={{
+        display: "inline-block",
+        width: size,
+        height: size,
+        border: "2px solid rgba(255,255,255,0.25)",
+        borderTopColor: "var(--color-accent-orange, #e8622a)",
+        borderRadius: "50%",
+        animation: "mwm-spin 0.85s linear infinite",
+      }}
+    />
   );
 }
 
