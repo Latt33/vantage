@@ -242,30 +242,16 @@ async function loadWater(area: AreaContext, signal?: AbortSignal): Promise<Featu
   };
 }
 
+async function loadSatelliteImagery(): Promise<FeatureCollection> {
+  return EMPTY_FC;
+}
+
 // ── Atmospheric ───────────────────────────────────────────────────────────────
 
 async function loadWeather(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
   const aoiId = getBackendAoiId(area);
   const raw = await fetchJson(`/api/aoi/${aoiId}/weather/forecast`, signal);
-  const fc = asFeatureCollection(raw);
-
-  // Parquet has one row per (grid-point × time-step). Keep only the earliest
-  // valid_time so each grid point appears once. Stay as Point features —
-  // the map renders one wind-arrow per point, not a polygon grid.
-  const times = [
-    ...new Set(
-      fc.features
-        .map((f) => f.properties?.valid_time as string | undefined)
-        .filter((t): t is string => Boolean(t))
-    ),
-  ].sort();
-  const firstTime = times[0];
-  if (!firstTime) return fc;
-
-  return {
-    ...fc,
-    features: fc.features.filter((f) => f.properties?.valid_time === firstTime),
-  };
+  return asFeatureCollection(raw);
 }
 
 // ── Infrastructure ────────────────────────────────────────────────────────────
@@ -318,17 +304,12 @@ async function loadCellular(area: AreaContext, signal?: AbortSignal): Promise<Fe
   };
 }
 
-async function loadSatellites(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
-  const aoiId = getBackendAoiId(area);
-  const raw = await fetchJson(`/api/aoi/${aoiId}/satellites/passes`, signal);
-  return asFeatureCollection(raw);
-}
-
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 export const SOURCES: DataSource[] = [
   // Base
   { id: "terrain",          label: "Topography",     sublabel: "Elevation · DEM",          category: "base",           hasData: false, load: loadTerrain },
+  { id: "satellite_imagery", label: "Satellite",      sublabel: "MapTiler imagery",         category: "base",           hasData: false, load: loadSatelliteImagery },
   { id: "landcover",        label: "Land Type",       sublabel: "Surface classification",   category: "base",           hasData: false, load: loadLandcover },
   { id: "forest",           label: "Forest Cover",    sublabel: "Canopy density",           category: "base",           hasData: false, load: loadForest },
   { id: "water",            label: "Water",           sublabel: "Lakes · Rivers",           category: "base",           hasData: false, load: loadWater },
@@ -339,7 +320,6 @@ export const SOURCES: DataSource[] = [
   // Surveillance
   { id: "cellular",         label: "Cell Towers",     sublabel: "RF coverage · Relays",     category: "surveillance",   hasData: false, load: loadCellular },
   { id: "traffic_cameras",   label: "Road Cameras",    sublabel: "Live weather cameras",     category: "surveillance",   hasData: false, load: loadTrafficCameras },
-  { id: "satellites",       label: "Satellites",      sublabel: "Recon window · Overhead",  category: "surveillance",   hasData: false, load: loadSatellites },
 ];
 
 export function getSource(id: string): DataSource | undefined {
