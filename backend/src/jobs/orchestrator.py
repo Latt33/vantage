@@ -30,10 +30,7 @@ from src.service.nls.dem import fetch_dem
 from src.service.nls.land import fetch_land
 from src.service.nls.water import fetch_water
 from src.service.nls.infra import fetch_infra
-<<<<<<< HEAD
-=======
 from src.service.n2yo.satellite import fetch_satellites
->>>>>>> 78585f40d767ead9813c8f2e6ca93e261811d2f0
 from src.service.analysis.mcoo import build_mcoo
 from src.service.digitraffic.weathercam import fetch_weathercam
 
