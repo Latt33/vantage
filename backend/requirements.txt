@@ -4,3 +4,4 @@ httpx==0.28.1
 redis[asyncio]==5.2.1
 pydantic>=2.0.0
 python-dotenv>=1.0.0
+pyproj>=3.6.1

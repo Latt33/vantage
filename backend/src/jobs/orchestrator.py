@@ -26,18 +26,19 @@ from src.jobs.store import set_job_status, set_stage_status
 from src.service._shared.bbox import BBox
 from src.service._shared.storage import is_stale
 from src.service.ecmwf.weather import fetch_weather
+from src.service.nls.dem import fetch_dem
 from src.service.nls.land import fetch_land
 from src.service.nls.water import fetch_water
-from src.service.osm.infra import fetch_infra
+from src.service.nls.infra import fetch_infra
 
 logger = logging.getLogger(__name__)
 
-# stage_name must match the category folder name under src/data/{aoi_id}/
 STAGES: list[tuple[str, object]] = [
     ("weather",        fetch_weather),
     ("water",          fetch_water),
     ("land",           fetch_land),
     ("infrastructure", fetch_infra),
+    ("dem",            fetch_dem),
 ]
 
 STAGE_NAMES: list[str] = [name for name, _ in STAGES]
