@@ -14,6 +14,7 @@ from src.api.routers import jobs
 from src.api.routers import land
 from src.api.routers import layers
 from src.api.routers import mcoo
+from src.api.routers import mission_window
 from src.api.routers import mml
 from src.api.routers import satellites
 from src.api.routers import system
@@ -53,4 +54,5 @@ app.include_router(satellites.router)
 app.include_router(cellular.router)
 app.include_router(traffic_cameras.router)
 app.include_router(mcoo.router)
+app.include_router(mission_window.router)
 app.include_router(mml.router)

@@ -12,6 +12,7 @@ import ToolPanel from "../components/ToolPanel";
 import ExportIpbReportModal, { ExportLegendState } from "../export/ExportIpbReportModal";
 import { SOURCES, loadSource } from "../sources";
 import { analysesForCapabilities } from "../analyses";
+import { fetchNextOverpass } from "../api/satelliteIntel";
 
 const SOURCE_ACCENTS: Record<string, string> = {
   terrain:          "#8a7a5a",
@@ -215,8 +216,23 @@ export default function OperationsPage() {
   function toggleDerived(id: string) {
     setDerivedSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const turningOn = !next.has(id);
+      if (turningOn) next.add(id);
+      else next.delete(id);
+
+      // Satellite intel filters are scoped as `satellite_intelligence:<sat_id>`.
+      // On check, kick off a placeholder fetch for the next overpass + imagery.
+      if (turningOn && aoi && id.startsWith("satellite_intelligence:")) {
+        const satelliteId = id.split(":", 2)[1];
+        fetchNextOverpass(satelliteId, aoi)
+          .then((pass) => {
+            console.info("[satellite-intel] next overpass", pass);
+          })
+          .catch(() => {
+            // Placeholder API — swallow until backend lands.
+          });
+      }
+
       return next;
     });
   }
