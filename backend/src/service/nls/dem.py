@@ -12,6 +12,7 @@ height cell so it can be used directly as a raster layer.
 Output files:
     {aoi_id}/dem/elevation.parquet   — lon, lat, elevation_m
     {aoi_id}/dem/elevation.png      — cropped raster overlay
+    {aoi_id}/dem/elevation.tif      — raw GeoTIFF (EPSG:3067) for derivatives
     {aoi_id}/dem/meta.json
 """
 
@@ -209,11 +210,17 @@ async def fetch_dem(aoi_id: str, bbox: BBox) -> dict:
 
     out_path = category_file(aoi_id, "dem", "elevation.parquet")
     image_path = category_file(aoi_id, "dem", "elevation.png")
+    tiff_path = category_file(aoi_id, "dem", "elevation.tif")
     ensure_dir(out_path.parent)
 
     try:
         resp = await client.get(url)
         resp.raise_for_status()
+
+        # Persist the raw GeoTIFF so derivatives (e.g. movement corridors)
+        # can re-read the native 3067 grid without hitting NLS again.
+        with open(tiff_path, "wb") as fh:
+            fh.write(resp.content)
 
         n_points = _tiff_to_parquet(resp.content, out_path)
         image_size = _tiff_to_png(resp.content, bbox, image_path)

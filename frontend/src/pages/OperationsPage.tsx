@@ -1086,6 +1086,54 @@ export default function OperationsPage() {
     });
   }, [aoi, jobInfo, mapReady, stages.dem]);
 
+  // Movement-corridors (heavy vehicles) — lazy raster derived from DEM + forest + roads.
+  // The PNG is built on the backend the first time the URL is requested, then cached.
+  // We add the layer once when the toggle is first turned on (so we don't compute for
+  // every AoI), and just flip visibility on subsequent toggles.
+  const movementCorridorsHeavyKey = "heavy_vehicles:movement_corridors";
+  useEffect(() => {
+    if (!mapReady || !aoi || !jobInfo) return;
+    // Wait for upstream stages so the backend has inputs ready when the
+    // PNG is requested. The compute itself reads the cached files only.
+    if (stages.dem !== "done" || stages.land !== "done" || stages.infrastructure !== "done") return;
+
+    const map = mapRef.current;
+    if (!map) return;
+
+    const sourceId = "derived-movement-corridors-heavy-src";
+    const layerId = "derived-movement-corridors-heavy-raster";
+    const enabled = derivedSelected.has(movementCorridorsHeavyKey);
+
+    if (!enabled) {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, "visibility", "none");
+      }
+      return;
+    }
+
+    if (!map.getSource(sourceId)) {
+      const imageUrl = `${API_BASE_URL}/api/aoi/${jobInfo.aoiId}/derived/movement_corridors/heavy.png?v=${encodeURIComponent(jobInfo.jobId)}`;
+      const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
+        [aoi.minLon, aoi.maxLat],
+        [aoi.maxLon, aoi.maxLat],
+        [aoi.maxLon, aoi.minLat],
+        [aoi.minLon, aoi.minLat],
+      ];
+      map.addSource(sourceId, { type: "image", url: imageUrl, coordinates });
+      map.addLayer({
+        id: layerId,
+        type: "raster",
+        source: sourceId,
+        paint: {
+          "raster-opacity": 0.78,
+          "raster-resampling": "nearest",
+        },
+      });
+    } else if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, "visibility", "visible");
+    }
+  }, [aoi, jobInfo, mapReady, stages.dem, stages.land, stages.infrastructure, derivedSelected]);
+
   // Sync layer visibility + opacity into MapLibre
   useEffect(() => {
     if (!mapReady) return;
