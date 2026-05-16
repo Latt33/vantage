@@ -218,6 +218,7 @@ export default function OperationsPage() {
   const [analysisLayers, setAnalysisLayers] = useState<Record<string, { visible: boolean; opacity: number }>>({});
   const [infraSelected, setInfraSelected] = useState<Set<string>>(new Set());
   const [derivedSelected, setDerivedSelected] = useState<Set<string>>(new Set());
+  const [derivedLoading, setDerivedLoading] = useState<Set<string>>(new Set());
   const [exportOpen, setExportOpen] = useState(false);
   const [exportShot, setExportShot] = useState<string | null>(null);
   const [missionWindowOpen, setMissionWindowOpen] = useState(false);
@@ -1129,16 +1130,23 @@ export default function OperationsPage() {
     });
   }, [aoi, activeAoiId, rasterVersion, mapReady, stages.dem]);
 
-  // Movement-corridors (heavy vehicles) — lazy raster derived from DEM + forest + roads.
-  // The PNG is built on the backend the first time the URL is requested, then cached.
-  // We add the layer once when the toggle is first turned on (so we don't compute for
-  // every AoI), and just flip visibility on subsequent toggles.
+  // Movement-corridors (heavy vehicles) — lazy raster derived from DEM + forest + water + roads.
+  // The PNG is built on the backend the first time the URL is requested, then cached
+  // on disk. We prefetch the URL once when the toggle is turned on so we can show a
+  // loading spinner in ToolPanel while the backend builds the file; then we add the
+  // raster source to MapLibre (which re-fetches via the browser's HTTP cache instantly).
+  // Subsequent toggles flip visibility on/off without re-fetching.
   const movementCorridorsHeavyKey = "heavy_vehicles:movement_corridors";
   useEffect(() => {
     if (!mapReady || !aoi || !jobInfo) return;
     // Wait for upstream stages so the backend has inputs ready when the
     // PNG is requested. The compute itself reads the cached files only.
-    if (stages.dem !== "done" || stages.land !== "done" || stages.infrastructure !== "done") return;
+    if (
+      stages.dem !== "done"
+      || stages.land !== "done"
+      || stages.infrastructure !== "done"
+      || stages.water !== "done"
+    ) return;
 
     const map = mapRef.current;
     if (!map) return;
@@ -1154,28 +1162,158 @@ export default function OperationsPage() {
       return;
     }
 
-    if (!map.getSource(sourceId)) {
-      const imageUrl = `${API_BASE_URL}/api/aoi/${jobInfo.aoiId}/derived/movement_corridors/heavy.png?v=${encodeURIComponent(jobInfo.jobId)}`;
-      const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
-        [aoi.minLon, aoi.maxLat],
-        [aoi.maxLon, aoi.maxLat],
-        [aoi.maxLon, aoi.minLat],
-        [aoi.minLon, aoi.minLat],
-      ];
-      map.addSource(sourceId, { type: "image", url: imageUrl, coordinates });
-      map.addLayer({
-        id: layerId,
-        type: "raster",
-        source: sourceId,
-        paint: {
-          "raster-opacity": 0.78,
-          "raster-resampling": "nearest",
-        },
-      });
-    } else if (map.getLayer(layerId)) {
-      map.setLayoutProperty(layerId, "visibility", "visible");
+    if (map.getSource(sourceId)) {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, "visibility", "visible");
+      }
+      return;
     }
-  }, [aoi, jobInfo, mapReady, stages.dem, stages.land, stages.infrastructure, derivedSelected]);
+
+    const imageUrl = `${API_BASE_URL}/api/aoi/${jobInfo.aoiId}/derived/movement_corridors/heavy.png?v=${encodeURIComponent(jobInfo.jobId)}`;
+    const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
+      [aoi.minLon, aoi.maxLat],
+      [aoi.maxLon, aoi.maxLat],
+      [aoi.maxLon, aoi.minLat],
+      [aoi.minLon, aoi.minLat],
+    ];
+
+    setDerivedLoading((prev) => {
+      if (prev.has(movementCorridorsHeavyKey)) return prev;
+      const next = new Set(prev);
+      next.add(movementCorridorsHeavyKey);
+      return next;
+    });
+
+    const controller = new AbortController();
+    let cancelled = false;
+
+    fetch(imageUrl, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`request failed (${res.status})`);
+        return res.blob();
+      })
+      .then(() => {
+        if (cancelled) return;
+        if (!map.getSource(sourceId)) {
+          map.addSource(sourceId, { type: "image", url: imageUrl, coordinates });
+          map.addLayer({
+            id: layerId,
+            type: "raster",
+            source: sourceId,
+            paint: {
+              "raster-opacity": 0.85,
+              "raster-resampling": "nearest",
+            },
+          });
+        }
+      })
+      .catch((err) => {
+        if ((err as Error)?.name === "AbortError") return;
+        console.warn("[movement-corridors] fetch failed", err);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setDerivedLoading((prev) => {
+          if (!prev.has(movementCorridorsHeavyKey)) return prev;
+          const next = new Set(prev);
+          next.delete(movementCorridorsHeavyKey);
+          return next;
+        });
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [aoi, jobInfo, mapReady, stages.dem, stages.land, stages.infrastructure, stages.water, derivedSelected]);
+
+  // FPV-threat areas (drones) — lazy raster derived from land-cover density + weather.
+  // Backend computes this from raw land cover polygons (dense-forest mask) and nearest
+  // wind grid, then serves a cached PNG. We prefetch once on first toggle-on so the
+  // ToolPanel row can show the same loading spinner behavior as movement corridors.
+  const fpvThreatAreasKey = "fpv_drones:fpv_threat_areas";
+  useEffect(() => {
+    if (!mapReady || !aoi || !jobInfo) return;
+    if (stages.land !== "done" || stages.weather !== "done") return;
+
+    const map = mapRef.current;
+    if (!map) return;
+
+    const sourceId = "derived-fpv-threat-src";
+    const layerId = "derived-fpv-threat-raster";
+    const enabled = derivedSelected.has(fpvThreatAreasKey);
+
+    if (!enabled) {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, "visibility", "none");
+      }
+      return;
+    }
+
+    if (map.getSource(sourceId)) {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, "visibility", "visible");
+      }
+      return;
+    }
+
+    const imageUrl = `${API_BASE_URL}/api/aoi/${jobInfo.aoiId}/derived/fpv_threat.png?v=${encodeURIComponent(jobInfo.jobId)}`;
+    const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
+      [aoi.minLon, aoi.maxLat],
+      [aoi.maxLon, aoi.maxLat],
+      [aoi.maxLon, aoi.minLat],
+      [aoi.minLon, aoi.minLat],
+    ];
+
+    setDerivedLoading((prev) => {
+      if (prev.has(fpvThreatAreasKey)) return prev;
+      const next = new Set(prev);
+      next.add(fpvThreatAreasKey);
+      return next;
+    });
+
+    const controller = new AbortController();
+    let cancelled = false;
+
+    fetch(imageUrl, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`request failed (${res.status})`);
+        return res.blob();
+      })
+      .then(() => {
+        if (cancelled) return;
+        if (!map.getSource(sourceId)) {
+          map.addSource(sourceId, { type: "image", url: imageUrl, coordinates });
+          map.addLayer({
+            id: layerId,
+            type: "raster",
+            source: sourceId,
+            paint: {
+              "raster-opacity": 0.78,
+              "raster-resampling": "nearest",
+            },
+          });
+        }
+      })
+      .catch((err) => {
+        if ((err as Error)?.name === "AbortError") return;
+        console.warn("[fpv-threat] fetch failed", err);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setDerivedLoading((prev) => {
+          if (!prev.has(fpvThreatAreasKey)) return prev;
+          const next = new Set(prev);
+          next.delete(fpvThreatAreasKey);
+          return next;
+        });
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [aoi, jobInfo, mapReady, stages.land, stages.weather, derivedSelected]);
 
   // Sync layer visibility + opacity into MapLibre
   useEffect(() => {
@@ -1549,6 +1687,7 @@ export default function OperationsPage() {
         <ToolPanel
           capabilities={capabilities}
           derivedSelected={derivedSelected}
+          derivedLoading={derivedLoading}
           onDerivedToggle={toggleDerived}
           onManageForces={() => navigate("/capabilities")}
           onExport={onExport}
@@ -1557,7 +1696,11 @@ export default function OperationsPage() {
 
         <div style={{ flex: 1, position: "relative" }}>
           <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
-          <MapLegend layers={layers} terrainElevRange={terrainElevRange} activeSatConstellations={activeSatConstellations} satConstellationsNoData={satConstellationsNoData} satLoadState={satTracksLoadState} />
+          <MapLegend
+            layers={layers}
+            terrainElevRange={terrainElevRange}
+            derivedSelected={derivedSelected}
+          />
         </div>
 
         <LayerPanel
@@ -1712,19 +1855,27 @@ const LAND_LEGEND: { label: string; color: string }[] = [
   { label: "Rock",      color: "rgb(122, 122, 122)" },
 ];
 
-function MapLegend({ layers, terrainElevRange, activeSatConstellations, satConstellationsNoData, satLoadState }: {
+const HEAVY_MOVEMENT_CORRIDOR_KEY = "heavy_vehicles:movement_corridors";
+const HEAVY_MOVEMENT_CORRIDOR_LEGEND: Array<{ label: string; color: string; transparent?: boolean }> = [
+  { label: "Passable", color: "rgba(140, 200, 240, 0.85)" },
+  { label: "Uncertain (Hidden)", color: "transparent", transparent: true },
+  { label: "No-Go", color: "rgba(210, 55, 55, 0.9)" },
+];
+
+function MapLegend({
+  layers,
+  terrainElevRange,
+  derivedSelected,
+}: {
   layers: LayerConfig[];
   terrainElevRange: { min: number; max: number } | null;
-  activeSatConstellations: Set<string>;
-  satConstellationsNoData: Set<string>;
-  satLoadState: "idle" | "loading" | "done";
+  derivedSelected: Set<string>;
 }) {
-  const landcoverOn = layers.some((l) => l.id === "landcover"   && l.visible);
-  const forestOn    = layers.some((l) => l.id === "forest"      && l.visible);
-  const terrainOn   = layers.some((l) => l.id === "terrain"     && l.visible);
-  const roadsOn     = layers.some((l) => l.id === "infra_roads" && l.visible);
-  const satOn       = activeSatConstellations.size > 0;
-  if (!landcoverOn && !forestOn && !terrainOn && !roadsOn && !satOn) return null;
+  const landcoverOn = layers.some((l) => l.id === "landcover" && l.visible);
+  const forestOn    = layers.some((l) => l.id === "forest"    && l.visible);
+  const terrainOn   = layers.some((l) => l.id === "terrain"   && l.visible);
+  const heavyCorridorsOn = derivedSelected.has(HEAVY_MOVEMENT_CORRIDOR_KEY);
+  if (!landcoverOn && !forestOn && !terrainOn && !heavyCorridorsOn) return null;
 
   return (
     <div
@@ -1796,43 +1947,28 @@ function MapLegend({ layers, terrainElevRange, activeSatConstellations, satConst
         </div>
       )}
 
-      {roadsOn && (
+      {heavyCorridorsOn && (
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--color-text-dim)", marginBottom: 5 }}>
-            Road Class
+            Heavy Vehicle Corridors
           </div>
-          {([
-            { color: "#ffd47a", label: "Local / track" },
-            { color: "#f1c40f", label: "Regional (seututie)" },
-            { color: "#d35400", label: "Trunk (kantatie)" },
-            { color: "#c0392b", label: "National (valtatie)" },
-            { color: "#7a1919", label: "Motorway" },
-          ] as const).map(({ color, label }) => (
+          {HEAVY_MOVEMENT_CORRIDOR_LEGEND.map(({ label, color, transparent }) => (
             <div key={label} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-              <div style={{ width: 20, height: 3, borderRadius: 1, background: color, flexShrink: 0 }} />
+              <div
+                style={{
+                  width: 11,
+                  height: 11,
+                  borderRadius: 2,
+                  flexShrink: 0,
+                  border: "1px solid rgba(255,255,255,0.30)",
+                  background: transparent
+                    ? "repeating-linear-gradient(45deg, rgba(255,255,255,0.08) 0 3px, rgba(255,255,255,0.18) 3px 6px)"
+                    : color,
+                }}
+              />
               <span>{label}</span>
             </div>
           ))}
-        </div>
-      )}
-
-      {satOn && (
-        <div>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--color-text-dim)", marginBottom: 5 }}>
-            Satellite Tracks
-          </div>
-          {Array.from(activeSatConstellations).map((id) => {
-            const loading = satLoadState === "loading";
-            const noData  = satLoadState === "done" && satConstellationsNoData.has(id);
-            return (
-              <div key={id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, opacity: noData ? 0.5 : 1 }}>
-                <div style={{ width: 20, height: 3, borderRadius: 1, background: noData ? "#555" : (CONSTELLATION_COLORS[id] ?? CONSTELLATION_COLOR_FALLBACK), flexShrink: 0 }} />
-                <span style={{ flex: 1 }}>{CONSTELLATION_LABELS[id] ?? id}</span>
-                {loading && <span style={{ fontSize: 9, color: "var(--color-text-dim)", letterSpacing: "0.05em" }}>…</span>}
-                {noData  && <span style={{ fontSize: 9, color: "#f4a261", letterSpacing: "0.05em" }}>NO PASSES</span>}
-              </div>
-            );
-          })}
         </div>
       )}
     </div>

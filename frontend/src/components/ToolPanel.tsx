@@ -5,6 +5,7 @@ import CapabilityIcon from "./icons/CapabilityIcon";
 interface ToolPanelProps {
   capabilities: Capability[];
   derivedSelected: Set<string>;
+  derivedLoading?: Set<string>;
   onDerivedToggle: (id: string) => void;
   onManageForces: () => void;
   onExport: () => void;
@@ -14,6 +15,7 @@ interface ToolPanelProps {
 export default function ToolPanel({
   capabilities,
   derivedSelected,
+  derivedLoading,
   onDerivedToggle,
   onManageForces,
   onExport,
@@ -43,6 +45,7 @@ export default function ToolPanel({
               key={c.id}
               capability={c}
               derivedSelected={derivedSelected}
+              derivedLoading={derivedLoading}
               onDerivedToggle={onDerivedToggle}
             />
           ))
@@ -177,10 +180,11 @@ function EmptyState({ text }: { text: string }) {
 interface ForceRowProps {
   capability: Capability;
   derivedSelected: Set<string>;
+  derivedLoading?: Set<string>;
   onDerivedToggle: (id: string) => void;
 }
 
-function ForceRow({ capability, derivedSelected, onDerivedToggle }: ForceRowProps) {
+function ForceRow({ capability, derivedSelected, derivedLoading, onDerivedToggle }: ForceRowProps) {
   const [expanded, setExpanded] = useState(true);
   const hasDerived = capability.derivedFilters.length > 0;
 
@@ -243,40 +247,68 @@ function ForceRow({ capability, derivedSelected, onDerivedToggle }: ForceRowProp
                 {expanded ? "▾" : "▸"} Derived Filters
               </button>
 
-              {expanded && capability.derivedFilters.map(filter => (
-                <label
-                  key={`${capability.id}:${filter.id}`}
-                  style={{
-                    minHeight: 20,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    cursor: "pointer",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    className="toggle"
-                    checked={derivedSelected.has(`${capability.id}:${filter.id}`)}
-                    onChange={() => onDerivedToggle(`${capability.id}:${filter.id}`)}
-                  />
-                  <span
+              {expanded && capability.derivedFilters.map(filter => {
+                const key = `${capability.id}:${filter.id}`;
+                const isLoading = derivedLoading?.has(key) ?? false;
+                return (
+                  <label
+                    key={key}
                     style={{
-                      fontFamily: "var(--font-ui)",
-                      fontSize: 11,
-                      color: "var(--color-text-primary)",
-                      lineHeight: 1.1,
+                      minHeight: 20,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      cursor: "pointer",
                     }}
                   >
-                    {filter.label}
-                  </span>
-                </label>
-              ))}
+                    <input
+                      type="checkbox"
+                      className="toggle"
+                      checked={derivedSelected.has(key)}
+                      onChange={() => onDerivedToggle(key)}
+                    />
+                    <span
+                      style={{
+                        fontFamily: "var(--font-ui)",
+                        fontSize: 11,
+                        color: "var(--color-text-primary)",
+                        lineHeight: 1.1,
+                      }}
+                    >
+                      {filter.label}
+                    </span>
+                    {isLoading && <DerivedSpinner />}
+                  </label>
+                );
+              })}
             </div>
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+function DerivedSpinner() {
+  return (
+    <>
+      <span
+        aria-label="Loading"
+        role="status"
+        style={{
+          width: 10,
+          height: 10,
+          marginLeft: 4,
+          borderRadius: "50%",
+          border: "1.5px solid rgba(232, 98, 42, 0.35)",
+          borderTopColor: "var(--color-accent-orange)",
+          display: "inline-block",
+          animation: "derived-spinner-rotate 0.8s linear infinite",
+          flexShrink: 0,
+        }}
+      />
+      <style>{`@keyframes derived-spinner-rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+    </>
   );
 }
 
