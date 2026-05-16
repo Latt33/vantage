@@ -59,9 +59,14 @@ _HOURLY_PARAMS = [
     "windspeed_10m",
     "winddirection_10m",
     "windgusts_10m",
+    "windspeed_120m",
+    "winddirection_120m",
     "visibility",
     "cloudcover",
     "cloudcover_low",
+    "cloudcover_mid",
+    "cloudcover_high",
+    "weather_code",
     # Personnel / equipment
     "temperature_2m",
     "apparent_temperature",
@@ -69,6 +74,8 @@ _HOURLY_PARAMS = [
     "dewpoint_2m",
     "surface_pressure",
     "freezinglevel_height",
+    "soil_temperature_0_to_7cm",
+    "shortwave_radiation",
 ]
 
 # Mapping from Open-Meteo param name to output key name
@@ -76,20 +83,27 @@ _PARAM_RENAME: dict[str, str] = {
     "windspeed_10m":          "wind_speed_ms",
     "winddirection_10m":      "wind_direction_deg",
     "windgusts_10m":          "wind_gust_ms",
+    "windspeed_120m":         "wind_speed_120m_ms",
+    "winddirection_120m":     "wind_direction_120m_deg",
     "precipitation":          "precipitation_mm",
     "rain":                   "rain_mm",
     "snowfall":               "snowfall_cm",
     "snow_depth":             "snow_depth_m",
     "soil_moisture_0_to_1cm": "soil_moisture_m3m3",
     "visibility":             "visibility_m",
+    "weather_code":           "weather_code",
     "cloudcover":             "cloudcover_pct",
     "cloudcover_low":         "cloudcover_low_pct",
+    "cloudcover_mid":         "cloudcover_mid_pct",
+    "cloudcover_high":        "cloudcover_high_pct",
     "temperature_2m":         "temperature_c",
     "apparent_temperature":   "apparent_temperature_c",
     "relativehumidity_2m":    "humidity_pct",
     "dewpoint_2m":            "dewpoint_c",
     "surface_pressure":       "pressure_hpa",
     "freezinglevel_height":   "freezing_level_m",
+    "soil_temperature_0_to_7cm": "soil_temperature_c",
+    "shortwave_radiation":    "shortwave_radiation_wm2",
 }
 
 
