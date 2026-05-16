@@ -26,6 +26,7 @@ from src.jobs.store import set_job_status, set_stage_status
 from src.service._shared.bbox import BBox
 from src.service._shared.storage import is_stale
 from src.service.ecmwf.weather import fetch_weather
+from src.service.maptiler.satellite_imagery import fetch_satellite_imagery
 from src.service.nls.dem import fetch_dem
 from src.service.nls.land import fetch_land
 from src.service.nls.water import fetch_water
@@ -43,6 +44,7 @@ FETCH_STAGES: list[tuple[str, object]] = [
     ("weather",         fetch_weather),
     ("water",           fetch_water),
     ("land",            fetch_land),
+    ("satellite_imagery", fetch_satellite_imagery),
     ("infrastructure",  fetch_infra),
     ("rail",            fetch_rail),
     ("dem",             fetch_dem),

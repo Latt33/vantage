@@ -21,6 +21,7 @@ import { fetchNextOverpass } from "../api/satelliteIntel";
 
 const SOURCE_ACCENTS: Record<string, string> = {
   terrain:     "#8a7a5a",
+  satellite_imagery: "#d2b26d",
   landcover:   "#5a7a5a",
   forest:      "#2a7a2a",
   water:       "#2a6db5",
@@ -185,6 +186,7 @@ const SURV_IDS:   LayerId[] = SOURCES.filter((s) => s.category === "surveillance
 
 // MapLibre source id for each data source id
 const MAP_SOURCE_IDS: Record<string, string> = {
+  satellite_imagery: "natural-satellite-src",
   landcover:   "natural-landcover-src",
   forest:      "natural-forest-src",
   water:       "natural-water-src",
@@ -199,6 +201,7 @@ const MAP_SOURCE_IDS: Record<string, string> = {
 
 // MapLibre layer ids that each data source drives
 const MAP_LAYER_IDS: Record<string, string[]> = {
+  satellite_imagery: ["natural-satellite-raster"],
   landcover:   ["natural-landcover-raster"],
   forest:      ["natural-forest-raster"],
   water:       ["natural-water-fill", "natural-water-line"],
@@ -211,7 +214,8 @@ const MAP_LAYER_IDS: Record<string, string[]> = {
   satellites:  ["satellites-track-line", "satellites-box-fill"],
 };
 
-const MAP_LAYER_OPACITY_PROP: Record<string, "fill-opacity" | "line-opacity" | "circle-opacity" | "icon-opacity" | "text-opacity"> = {
+const MAP_LAYER_OPACITY_PROP: Record<string, "fill-opacity" | "line-opacity" | "circle-opacity" | "icon-opacity" | "text-opacity" | "raster-opacity"> = {
+  "natural-satellite-raster": "raster-opacity",
   "natural-landcover-fill": "fill-opacity",
   "natural-landcover-line": "line-opacity",
   "natural-forest-fill":    "fill-opacity",
@@ -240,6 +244,7 @@ const EMPTY_WEATHER_AVERAGES: WeatherAverages = {
 
 // Maps each source id to its backend job stage name
 const SOURCE_STAGE: Record<string, string> = {
+  satellite_imagery: "satellite_imagery",
   landcover:   "land",
   forest:      "land",
   water:       "water",
@@ -255,6 +260,16 @@ const SOURCE_STAGE: Record<string, string> = {
 interface JobInfo {
   aoiId: string;
   jobId: string;
+}
+
+interface SatelliteOverlayConfig {
+  provider: string;
+  tileset: string;
+  image_format: string;
+  tile_size: number;
+  minzoom: number;
+  maxzoom: number;
+  attribution?: string;
 }
 
 function loadAoi(): BoundingBox | null {
@@ -309,6 +324,7 @@ export default function OperationsPage() {
   const [stages, setStages] = useState<Record<string, string>>({});
   const loadedSources = useRef<Set<string>>(new Set());
   const [sourceData, setSourceData] = useState<Record<string, FeatureCollection>>({
+    satellite_imagery: EMPTY_FC,
     landcover:   EMPTY_FC,
     forest:      EMPTY_FC,
     water:       EMPTY_FC,
@@ -864,7 +880,7 @@ export default function OperationsPage() {
     if (!map) return;
 
     for (const [id, data] of Object.entries(sourceData)) {
-      if (id === "terrain" || id === "landcover" || id === "forest") continue;
+      if (id === "terrain" || id === "satellite_imagery" || id === "landcover" || id === "forest") continue;
       const sourceId = MAP_SOURCE_IDS[id];
       if (!sourceId) continue;
       const src = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
@@ -919,6 +935,70 @@ export default function OperationsPage() {
       },
     });
   }, [aoi, jobInfo, mapReady, stages.land, layers]);
+
+  useEffect(() => {
+    if (!mapReady || !aoi || !jobInfo) return;
+    if (stages.satellite_imagery !== "done") return;
+    if (!MAPTILER_KEY) return;
+
+    const currentJob = jobInfo;
+    const mapInstance = mapRef.current;
+    if (!mapInstance) return;
+    const map: maplibregl.Map = mapInstance;
+
+    const controller = new AbortController();
+    const sourceId = MAP_SOURCE_IDS.satellite_imagery;
+    const layerId = "natural-satellite-raster";
+
+    async function syncSatelliteOverlay() {
+      const res = await fetch(
+        `${API_BASE_URL}/api/aoi/${currentJob.aoiId}/satellite_imagery/overlay?v=${encodeURIComponent(currentJob.jobId)}`,
+        { signal: controller.signal },
+      );
+      if (!res.ok) {
+        throw new Error(`request failed (${res.status})`);
+      }
+
+      const overlay = (await res.json()) as SatelliteOverlayConfig;
+      const tiles = [
+        `https://api.maptiler.com/tiles/${overlay.tileset}/{z}/{x}/{y}.${overlay.image_format}?key=${MAPTILER_KEY}`,
+      ];
+
+      if (map.getLayer(layerId)) {
+        map.removeLayer(layerId);
+      }
+      if (map.getSource(sourceId)) {
+        map.removeSource(sourceId);
+      }
+
+      map.addSource(sourceId, {
+        type: "raster",
+        tiles,
+        tileSize: overlay.tile_size,
+        minzoom: overlay.minzoom,
+        maxzoom: overlay.maxzoom,
+        attribution: overlay.attribution,
+      });
+      map.addLayer({
+        id: layerId,
+        type: "raster",
+        source: sourceId,
+        layout: { visibility: layers.find((layer) => layer.id === "satellite_imagery")?.visible ? "visible" : "none" },
+        paint: {
+          "raster-opacity": layers.find((layer) => layer.id === "satellite_imagery")?.opacity ?? 0.78,
+          "raster-resampling": "linear",
+        },
+      }, "aoi-outline");
+    }
+
+    syncSatelliteOverlay().catch((err) => {
+      if ((err as Error)?.name === "AbortError") return;
+      console.warn("[map] failed to load satellite imagery overlay", err);
+      setLayerLoadState("satellite_imagery", "error");
+    });
+
+    return () => controller.abort();
+  }, [aoi, jobInfo, layers, mapReady, stages.satellite_imagery]);
 
   useEffect(() => {
     if (!mapReady || !aoi || !jobInfo) return;
@@ -1139,6 +1219,7 @@ export default function OperationsPage() {
         if (status === "error") return { ...l, loadState: "error" as const };
         // "done" loadState is set by the fetch effect after data arrives
         if (status === "done") {
+          if (l.id === "satellite_imagery") return { ...l, loadState: "ready" as const, hasData: true };
           if (l.id === "terrain") return { ...l, loadState: "ready" as const, hasData: true };
           return l;
         }
@@ -1159,7 +1240,7 @@ export default function OperationsPage() {
     for (const source of SOURCES) {
       const stageName = SOURCE_STAGE[source.id];
       if (!stageName) continue;
-      if (source.id === "terrain") continue;
+      if (source.id === "terrain" || source.id === "satellite_imagery") continue;
       if (stages[stageName] !== "done") continue;
       if (loadedSources.current.has(source.id)) continue;
 
