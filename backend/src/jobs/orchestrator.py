@@ -1,57 +1,78 @@
 """Job orchestrator — the only place that wires service calls together.
 
-Each stage is run sequentially for now. Stages are independent: a failure
-in one stage logs an error and continues so the other layers still appear.
+Stages run concurrently with asyncio.gather since every fetch is I/O bound.
+A failure in one stage is isolated: the other stages continue and the job
+still completes. The failed stage is marked "error" in Redis and the layer
+key is stored with an error payload so the frontend can show why it's absent.
 
-To add a new data source:
-1. Create its module under backend/src/service/<source>/
-2. Import it here and add a stage entry in STAGES
-3. Nothing else needs to change
+To add a data source:
+    1. Create backend/src/service/<source>/<feature>.py
+    2. Import the fetch function here and add it to STAGES
+    3. Nothing else changes
 
 To remove a data source:
-1. Delete its module
-2. Remove it from STAGES here
-3. Nothing else breaks
+    1. Delete its module
+    2. Remove it from STAGES here
+    3. Nothing else breaks
 """
 
+import asyncio
 import logging
 
-from src.jobs.store import update_job
+from src.jobs.store import set_job_status, set_stage_status, store_layer
 from src.service._shared.bbox import BBox
-from src.service.ecmwf.wind import fetch_wind
-from src.service.nls.dem import fetch_dem
+from src.service.ecmwf.weather import fetch_weather
+from src.service.nls.terrain import fetch_terrain
+from src.service.osm.infra import fetch_infra
 
 logger = logging.getLogger(__name__)
 
-# Ordered list of (stage_name, coroutine_factory) pairs.
-# Add new sources here and nowhere else.
-STAGES = [
-    ("dem", fetch_dem),
-    ("wind", fetch_wind),
+# Add / remove sources here only.
+# Format: (stage_name, async_fetch_fn)
+# stage_name is what the frontend and API use to identify the layer.
+STAGES: list[tuple[str, object]] = [
+    ("terrain",        fetch_terrain),
+    ("weather",        fetch_weather),
+    ("infrastructure", fetch_infra),
 ]
 
-STAGE_NAMES = [name for name, _ in STAGES]
+STAGE_NAMES: list[str] = [name for name, _ in STAGES]
+
+
+async def _run_stage(job_id: str, stage_name: str, fetch_fn, bbox: BBox) -> None:
+    """Run a single stage, update Redis, and store the layer result."""
+    await set_stage_status(job_id, stage_name, "running")
+    try:
+        result = await fetch_fn(bbox)
+        await store_layer(job_id, stage_name, result)
+        # Treat a service-level error (empty features + error field) as a warning,
+        # not a hard failure — the layer still goes to Redis so the UI can explain it.
+        if result.get("status") == "error":
+            await set_stage_status(job_id, stage_name, "error")
+            logger.warning("Job %s: stage '%s' returned service error", job_id, stage_name)
+        else:
+            await set_stage_status(job_id, stage_name, "done")
+            logger.info("Job %s: stage '%s' completed (%d features)",
+                        job_id, stage_name, len(result.get("features", [])))
+    except Exception as exc:
+        logger.error("Job %s: stage '%s' raised unhandled exception: %s", job_id, stage_name, exc)
+        await set_stage_status(job_id, stage_name, "error")
+        await store_layer(job_id, stage_name, {
+            "type": "FeatureCollection",
+            "features": [],
+            "status": "error",
+            "error": str(exc),
+        })
 
 
 async def run_job(job_id: str, bbox: BBox) -> None:
-    """Execute all data-fetch stages for a job and update Redis at each step."""
-    await update_job(job_id, status="running")
+    """Execute all data-fetch stages concurrently and finalise job status."""
+    await set_job_status(job_id, "running")
 
-    for stage_name, fetch_fn in STAGES:
-        await update_job(job_id, stages={stage_name: "running"})
-        try:
-            result = await fetch_fn(bbox)
-            await update_job(
-                job_id,
-                stages={stage_name: "done"},
-                results={stage_name: result},
-            )
-            logger.info("Job %s: stage '%s' completed", job_id, stage_name)
-        except Exception as exc:
-            logger.error("Job %s: stage '%s' failed: %s", job_id, stage_name, exc)
-            await update_job(job_id, stages={stage_name: "error"})
+    await asyncio.gather(*[
+        _run_stage(job_id, name, fn, bbox)
+        for name, fn in STAGES
+    ])
 
-    # Mark job complete even if individual stages errored — partial results
-    # are still useful for the frontend to display.
-    await update_job(job_id, status="completed")
+    await set_job_status(job_id, "completed")
     logger.info("Job %s: all stages finished", job_id)

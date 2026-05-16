@@ -1,6 +1,2 @@
-"""Service for fetching DEM data."""
-
-
-def fetch_dem_data() -> dict:
-    """Return placeholder DEM payload."""
-    return {"source": "dem", "status": "not_implemented"}
+# DEPRECATED — delete this file.
+# Replaced by: backend/src/service/nls/terrain.py
