@@ -57,7 +57,7 @@ export default function LayerPanel({
             <div key={layer.id}>
               <LayerRow layer={layer} onChange={onChange} />
               {layer.id === "weather" && layer.visible && (
-                <WeatherControls metrics={weatherMetrics} onToggle={onWeatherMetricToggle} />
+                <WeatherSummary averages={weatherAverages} />
               )}
             </div>
           ))}
