@@ -3,4 +3,7 @@ __pycache__/
 .env
 data_cache/
 *.pyc
-backend/src/data/
+node_modules
+.env
+backend/src/data/*
+

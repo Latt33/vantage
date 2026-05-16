@@ -1,23 +1,19 @@
-import { LayerConfig } from "../types";
+import { LayerConfig, LayerId, LayerSection } from "../types";
 
 interface LayerPanelProps {
-  layers: LayerConfig[];
-  onChange: (id: string, patch: Partial<LayerConfig>) => void;
+  sections: LayerSection[];
+  onChange: (id: LayerId, patch: Partial<LayerConfig>) => void;
 }
 
-export default function LayerPanel({ layers, onChange }: LayerPanelProps) {
+export default function LayerPanel({ sections, onChange }: LayerPanelProps) {
   return (
     <div
       style={{
-        position: "absolute",
-        top: 0,
-        right: 0,
-        bottom: 0,
         width: 260,
+        flexShrink: 0,
         background: "var(--color-bg-panel)",
         borderLeft: "1px solid var(--color-border-default)",
         overflowY: "auto",
-        zIndex: 5,
       }}
     >
       <div
@@ -32,33 +28,65 @@ export default function LayerPanel({ layers, onChange }: LayerPanelProps) {
           borderBottom: "1px solid var(--color-border-subtle)",
         }}
       >
-        Layers
+        Layer Panel
       </div>
 
-      <div>
-        {layers.map(layer => (
-          <LayerRow key={layer.id} layer={layer} onChange={onChange} />
-        ))}
-      </div>
+      {sections.map(section => (
+        <div key={section.title}>
+          <SectionHeader title={section.title} />
+          {section.layers.map(layer => (
+            <LayerRow key={layer.id} layer={layer} onChange={onChange} />
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
 
-interface LayerRowProps {
-  layer: LayerConfig;
-  onChange: (id: string, patch: Partial<LayerConfig>) => void;
+function SectionHeader({ title }: { title: string }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "10px 12px 4px 12px",
+      }}
+    >
+      <div style={{ flexShrink: 0, height: 1, width: 12, background: "var(--color-border-default)" }} />
+      <div
+        style={{
+          fontFamily: "var(--font-heading)",
+          fontSize: 9,
+          fontWeight: 600,
+          letterSpacing: "0.12em",
+          textTransform: "uppercase",
+          color: "var(--color-text-dim)",
+        }}
+      >
+        {title}
+      </div>
+      <div style={{ flex: 1, height: 1, background: "var(--color-border-default)" }} />
+    </div>
+  );
 }
 
-function LayerRow({ layer, onChange }: LayerRowProps) {
+interface RowProps {
+  layer: LayerConfig;
+  onChange: (id: LayerId, patch: Partial<LayerConfig>) => void;
+}
+
+function LayerRow({ layer, onChange }: RowProps) {
+  const showBadge = layer.visible && layer.hasData !== true;
   return (
     <div style={{ borderBottom: "1px solid var(--color-border-subtle)" }}>
       <div
         style={{
-          height: 32,
+          minHeight: 32,
           display: "flex",
           alignItems: "center",
-          gap: "var(--space-2)",
-          padding: "0 var(--space-3)",
+          gap: 8,
+          padding: "0 12px",
         }}
       >
         <input
@@ -80,14 +108,14 @@ function LayerRow({ layer, onChange }: LayerRowProps) {
             style={{
               display: "flex",
               alignItems: "center",
-              gap: "var(--space-2)",
+              gap: 6,
               fontFamily: "var(--font-ui)",
               fontSize: 13,
               color: "var(--color-text-primary)",
             }}
           >
             <span>{layer.label}</span>
-            {layer.visible && <span className="badge badge--warn">No Data</span>}
+            {showBadge && <span className="badge badge--warn">No Data</span>}
           </div>
           <div
             style={{
@@ -114,10 +142,10 @@ function LayerRow({ layer, onChange }: LayerRowProps) {
       {layer.visible && (
         <div
           style={{
-            padding: "var(--space-2) var(--space-3) var(--space-3) var(--space-3)",
+            padding: "6px 12px 10px 12px",
             display: "flex",
             flexDirection: "column",
-            gap: "var(--space-1)",
+            gap: 4,
           }}
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
