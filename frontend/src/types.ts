@@ -25,6 +25,7 @@ export interface LayerConfig {
   opacity: number;
   /** When false (default), the panel shows a "NO DATA" badge while visible. */
   hasData?: boolean;
+  loadState?: "idle" | "loading" | "ready" | "error";
 }
 
 export interface LayerSection {

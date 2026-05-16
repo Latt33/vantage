@@ -197,6 +197,7 @@ html, body, #root {
 .badge--ok   { color: var(--color-status-ok); }
 .badge--warn { color: var(--color-status-warn); }
 .badge--crit { color: var(--color-status-crit); }
+.badge--info { color: var(--color-accent-teal); }
 
 /* Data readout */
 .data-value {

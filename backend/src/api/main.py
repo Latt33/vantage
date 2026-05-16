@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routers import aoi
+from src.api.routers import cellular
 from src.api.routers import dem
 from src.api.routers import infrastructure
 from src.api.routers import jobs
@@ -49,6 +50,7 @@ app.include_router(land.router)
 app.include_router(infrastructure.router)
 app.include_router(dem.router)
 app.include_router(satellites.router)
+app.include_router(cellular.router)
 app.include_router(traffic_cameras.router)
 app.include_router(mcoo.router)
 app.include_router(mml.router)

@@ -17,7 +17,7 @@
 
 import { AreaContext } from "../area";
 
-export type SourceCategory = "base" | "atmospheric" | "demographic";
+export type SourceCategory = "base" | "atmospheric" | "demographic" | "infrastructure" | "surveillance";
 
 export interface DataSource<TResult = unknown> {
   id: string;

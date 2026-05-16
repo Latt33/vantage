@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { INFRASTRUCTURE, InfraNode } from "../data/infrastructure";
 import { LayerConfig, LayerId, LayerSection } from "../types";
 
@@ -98,7 +98,16 @@ interface RowProps {
 }
 
 function LayerRow({ layer, onChange }: RowProps) {
-  const showBadge = layer.visible && layer.hasData !== true;
+  let badge: React.ReactNode = null;
+  if (layer.loadState === "error") {
+    badge = <span className="badge badge--crit">Error</span>;
+  } else if (layer.loadState === "ready") {
+    if (layer.hasData !== true) badge = <span className="badge badge--warn">No Data</span>;
+  } else if (layer.loadState === "loading") {
+    badge = <span className="badge badge--info">Loading</span>;
+  }
+  // loadState undefined (e.g. population with no backend stage) → no badge
+
   return (
     <div style={{ borderBottom: "1px solid var(--color-border-subtle)" }}>
       <div
@@ -136,7 +145,7 @@ function LayerRow({ layer, onChange }: RowProps) {
             }}
           >
             <span>{layer.label}</span>
-            {showBadge && <span className="badge badge--warn">No Data</span>}
+            {badge}
           </div>
           <div
             style={{

@@ -10,5 +10,5 @@ router = APIRouter(prefix="/api/aoi/{aoi_id}/satellites", tags=["satellites"])
 
 @router.get("/passes", response_class=FileResponse)
 async def get_satellite_passes(aoi_id: str) -> FileResponse:
-    """Upcoming reconnaissance-satellite passes over the AOI (JSON)."""
-    return serve_layer_file(aoi_id, "satellites", "passes.json")
+    """Upcoming reconnaissance-satellite passes over the AOI (GeoJSON)."""
+    return serve_layer_file(aoi_id, "satellites", "passes.geojson")

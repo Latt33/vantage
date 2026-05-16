@@ -6,7 +6,6 @@ import { BoundingBox, LayerConfig, LayerId, LayerSection } from "../types";
 import { bboxToArea, setArea } from "../area";
 import { API_BASE_URL, MAPTILER_KEY } from "../config";
 import { CAPABILITIES, Capability } from "../data/capabilities";
-import { INFRASTRUCTURE } from "../data/infrastructure";
 import LayerPanel from "../components/LayerPanel";
 import TimeSlider from "../components/TimeSlider";
 import ToolPanel from "../components/ToolPanel";
@@ -15,12 +14,19 @@ import { SOURCES, loadSource } from "../sources";
 import { analysesForCapabilities } from "../analyses";
 
 const SOURCE_ACCENTS: Record<string, string> = {
-  terrain: "#8a7a5a",
-  landcover: "#5a7a5a",
-  forest: "#2a7a2a",
-  water: "#2a6db5",
-  weather: "#2a6db5",
-  population: "#e8622a",
+  terrain:          "#8a7a5a",
+  landcover:        "#5a7a5a",
+  forest:           "#2a7a2a",
+  water:            "#2a6db5",
+  weather:          "#2a6db5",
+  population:       "#e8622a",
+  infra_roads:      "#a8a8a0",
+  infra_bridges:    "#d4a017",
+  infra_fuel:       "#e8622a",
+  infra_power:      "#d4d020",
+  infra_healthcare: "#c0392b",
+  cellular:         "#2a9d8a",
+  satellites:       "#8060c8",
 };
 
 const EMPTY_FC: FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -35,38 +41,75 @@ const INITIAL_LAYERS: LayerConfig[] = SOURCES.map((s) => ({
   hasData: s.hasData,
 }));
 
-const BASE_IDS: LayerId[] = SOURCES.filter((s) => s.category === "base").map((s) => s.id);
-const ATMOS_IDS: LayerId[] = SOURCES.filter((s) => s.category === "atmospheric").map((s) => s.id);
-const DEMO_IDS: LayerId[] = SOURCES.filter((s) => s.category === "demographic").map((s) => s.id);
+const BASE_IDS:   LayerId[] = SOURCES.filter((s) => s.category === "base").map((s) => s.id);
+const ATMOS_IDS:  LayerId[] = SOURCES.filter((s) => s.category === "atmospheric").map((s) => s.id);
+const DEMO_IDS:   LayerId[] = SOURCES.filter((s) => s.category === "demographic").map((s) => s.id);
+const INFRA_IDS:  LayerId[] = SOURCES.filter((s) => s.category === "infrastructure").map((s) => s.id);
+const SURV_IDS:   LayerId[] = SOURCES.filter((s) => s.category === "surveillance").map((s) => s.id);
 
+// MapLibre source id for each data source id
 const MAP_SOURCE_IDS: Record<string, string> = {
-  landcover: "natural-landcover-src",
-  forest: "natural-forest-src",
-  water: "natural-water-src",
-  weather: "natural-weather-src",
+  landcover:        "natural-landcover-src",
+  forest:           "natural-forest-src",
+  water:            "natural-water-src",
+  weather:          "natural-weather-src",
+  terrain:          "dem-terrain-src",
+  infra_roads:      "infra-roads-src",
+  infra_bridges:    "infra-bridges-src",
+  infra_fuel:       "infra-fuel-src",
+  infra_power:      "infra-power-src",
+  infra_healthcare: "infra-healthcare-src",
+  cellular:         "cellular-src",
+  satellites:       "satellites-src",
 };
 
+// MapLibre layer ids that each data source drives
 const MAP_LAYER_IDS: Record<string, string[]> = {
-  landcover: ["natural-landcover-fill", "natural-landcover-line"],
-  forest: ["natural-forest-fill"],
-  water: ["natural-water-fill", "natural-water-line"],
-  weather: ["natural-weather-points"],
+  landcover:        ["natural-landcover-fill", "natural-landcover-line"],
+  forest:           ["natural-forest-fill"],
+  water:            ["natural-water-fill", "natural-water-line"],
+  weather:          ["natural-weather-points"],
+  terrain:          ["dem-terrain-points"],
+  infra_roads:      ["infra-roads-line"],
+  infra_bridges:    ["infra-bridges-line"],
+  infra_fuel:       ["infra-fuel-circle"],
+  infra_power:      ["infra-power-line"],
+  infra_healthcare: ["infra-healthcare-circle"],
+  cellular:         ["cellular-circle"],
+  satellites:       ["satellites-circle"],
 };
 
 const MAP_LAYER_OPACITY_PROP: Record<string, "fill-opacity" | "line-opacity" | "circle-opacity"> = {
-  "natural-landcover-fill": "fill-opacity",
-  "natural-landcover-line": "line-opacity",
-  "natural-forest-fill": "fill-opacity",
-  "natural-water-fill": "fill-opacity",
-  "natural-water-line": "line-opacity",
-  "natural-weather-points": "circle-opacity",
+  "natural-landcover-fill":   "fill-opacity",
+  "natural-landcover-line":   "line-opacity",
+  "natural-forest-fill":      "fill-opacity",
+  "natural-water-fill":       "fill-opacity",
+  "natural-water-line":       "line-opacity",
+  "natural-weather-points":   "circle-opacity",
+  "dem-terrain-points":       "circle-opacity",
+  "infra-roads-line":         "line-opacity",
+  "infra-bridges-line":       "line-opacity",
+  "infra-fuel-circle":        "circle-opacity",
+  "infra-power-line":         "line-opacity",
+  "infra-healthcare-circle":  "circle-opacity",
+  "cellular-circle":          "circle-opacity",
+  "satellites-circle":        "circle-opacity",
 };
 
+// Maps each source id to its backend job stage name
 const SOURCE_STAGE: Record<string, string> = {
-  landcover: "land",
-  forest: "land",
-  water: "water",
-  weather: "weather",
+  landcover:        "land",
+  forest:           "land",
+  water:            "water",
+  weather:          "weather",
+  terrain:          "dem",
+  infra_roads:      "infrastructure",
+  infra_bridges:    "infrastructure",
+  infra_fuel:       "infrastructure",
+  infra_power:      "infrastructure",
+  infra_healthcare: "infrastructure",
+  cellular:         "cellular",
+  satellites:       "satellites",
 };
 
 interface JobInfo {
@@ -99,22 +142,6 @@ function bboxLabel(b: BoundingBox): string {
   return `${latStr} ${lonStr}`;
 }
 
-function flattenInfraLabels(): Record<string, string> {
-  const map: Record<string, string> = {};
-
-  const walk = (items: typeof INFRASTRUCTURE) => {
-    for (const item of items) {
-      map[item.id] = item.label;
-      if (item.children && item.children.length > 0) {
-        walk(item.children);
-      }
-    }
-  };
-
-  walk(INFRASTRUCTURE);
-  return map;
-}
-
 export default function OperationsPage() {
   const navigate = useNavigate();
   const aoi = useMemo(() => loadAoi(), []);
@@ -134,15 +161,22 @@ export default function OperationsPage() {
   const [stages, setStages] = useState<Record<string, string>>({});
   const loadedSources = useRef<Set<string>>(new Set());
   const [sourceData, setSourceData] = useState<Record<string, FeatureCollection>>({
-    landcover: EMPTY_FC,
-    forest: EMPTY_FC,
-    water: EMPTY_FC,
-    weather: EMPTY_FC,
+    landcover:        EMPTY_FC,
+    forest:           EMPTY_FC,
+    water:            EMPTY_FC,
+    weather:          EMPTY_FC,
+    terrain:          EMPTY_FC,
+    infra_roads:      EMPTY_FC,
+    infra_bridges:    EMPTY_FC,
+    infra_fuel:       EMPTY_FC,
+    infra_power:      EMPTY_FC,
+    infra_healthcare: EMPTY_FC,
+    cellular:         EMPTY_FC,
+    satellites:       EMPTY_FC,
   });
 
   const capabilityIds = useMemo(() => capabilities.map((c) => c.id), [capabilities]);
   const availableAnalyses = useMemo(() => analysesForCapabilities(capabilityIds), [capabilityIds]);
-  const infraLabelById = useMemo(() => flattenInfraLabels(), []);
 
   const analysisLayerConfigs: LayerConfig[] = useMemo(
     () =>
@@ -218,6 +252,10 @@ export default function OperationsPage() {
     setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, hasData } : l)));
   }
 
+  function setLayerLoadState(id: LayerId, loadState: LayerConfig["loadState"]) {
+    setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, loadState } : l)));
+  }
+
   useEffect(() => {
     if (!aoi) {
       navigate("/aoi", { replace: true });
@@ -279,12 +317,20 @@ export default function OperationsPage() {
     }
 
     pollStatus();
-    timer = window.setInterval(pollStatus, 2000);
+    timer = window.setInterval(pollStatus, 5000);
 
     return () => {
       active = false;
       if (timer) window.clearInterval(timer);
     };
+  }, [jobInfo]);
+
+  // When a job starts, immediately mark all tracked sources as loading
+  useEffect(() => {
+    if (!jobInfo) return;
+    setLayers((prev) =>
+      prev.map((l) => (SOURCE_STAGE[l.id] ? { ...l, loadState: "loading" as const } : l))
+    );
   }, [jobInfo]);
 
   useEffect(() => {
@@ -309,6 +355,7 @@ export default function OperationsPage() {
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
 
     map.on("load", () => {
+      // AOI boundary
       map.addSource("aoi-source", {
         type: "geojson",
         data: {
@@ -326,7 +373,6 @@ export default function OperationsPage() {
           },
         },
       });
-
       map.addLayer({
         id: "aoi-outline",
         type: "line",
@@ -334,11 +380,8 @@ export default function OperationsPage() {
         paint: { "line-color": "#e8622a", "line-width": 1.5, "line-opacity": 0.85 },
       });
 
+      // ── Base ──────────────────────────────────────────────────────────────
       map.addSource(MAP_SOURCE_IDS.landcover, { type: "geojson", data: EMPTY_FC });
-      map.addSource(MAP_SOURCE_IDS.forest, { type: "geojson", data: EMPTY_FC });
-      map.addSource(MAP_SOURCE_IDS.water, { type: "geojson", data: EMPTY_FC });
-      map.addSource(MAP_SOURCE_IDS.weather, { type: "geojson", data: EMPTY_FC });
-
       map.addLayer({
         id: "natural-landcover-fill",
         type: "fill",
@@ -346,7 +389,6 @@ export default function OperationsPage() {
         layout: { visibility: "none" },
         paint: { "fill-color": "#5a7a5a", "fill-opacity": 0.45 },
       });
-
       map.addLayer({
         id: "natural-landcover-line",
         type: "line",
@@ -355,6 +397,7 @@ export default function OperationsPage() {
         paint: { "line-color": "#7c9b7c", "line-width": 0.7, "line-opacity": 0.55 },
       });
 
+      map.addSource(MAP_SOURCE_IDS.forest, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
         id: "natural-forest-fill",
         type: "fill",
@@ -363,6 +406,7 @@ export default function OperationsPage() {
         paint: { "fill-color": "#2a7a2a", "fill-opacity": 0.45 },
       });
 
+      map.addSource(MAP_SOURCE_IDS.water, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
         id: "natural-water-fill",
         type: "fill",
@@ -371,7 +415,6 @@ export default function OperationsPage() {
         layout: { visibility: "none" },
         paint: { "fill-color": "#2a6db5", "fill-opacity": 0.5 },
       });
-
       map.addLayer({
         id: "natural-water-line",
         type: "line",
@@ -381,6 +424,34 @@ export default function OperationsPage() {
         paint: { "line-color": "#4e8ad1", "line-width": 1.6, "line-opacity": 0.8 },
       });
 
+      // DEM elevation grid — small circles colored by elevation
+      map.addSource(MAP_SOURCE_IDS.terrain, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "dem-terrain-points",
+        type: "circle",
+        source: MAP_SOURCE_IDS.terrain,
+        layout: { visibility: "none" },
+        paint: {
+          "circle-radius": 2,
+          "circle-color": [
+            "interpolate", ["linear"],
+            ["coalesce", ["get", "elevation_m"], 0],
+            0,    "#1a3310",
+            50,   "#2d5016",
+            100,  "#4a7a20",
+            200,  "#6a9a40",
+            400,  "#909a60",
+            700,  "#b0a060",
+            1000, "#c8b880",
+            1500, "#e8e0d0",
+          ],
+          "circle-stroke-width": 0,
+          "circle-opacity": 0.65,
+        },
+      });
+
+      // ── Atmospheric ───────────────────────────────────────────────────────
+      map.addSource(MAP_SOURCE_IDS.weather, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
         id: "natural-weather-points",
         type: "circle",
@@ -389,19 +460,104 @@ export default function OperationsPage() {
         paint: {
           "circle-radius": ["interpolate", ["linear"], ["zoom"], 6, 4, 10, 8],
           "circle-color": [
-            "interpolate",
-            ["linear"],
+            "interpolate", ["linear"],
             ["coalesce", ["get", "wind_speed_ms"], 0],
-            0,
-            "#2a6db5",
-            8,
-            "#d4a017",
-            16,
-            "#c0392b",
+            0,  "#2a6db5",
+            8,  "#d4a017",
+            16, "#c0392b",
           ],
           "circle-stroke-color": "#111111",
           "circle-stroke-width": 0.8,
           "circle-opacity": 0.75,
+        },
+      });
+
+      // ── Infrastructure ────────────────────────────────────────────────────
+      map.addSource(MAP_SOURCE_IDS.infra_roads, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "infra-roads-line",
+        type: "line",
+        source: MAP_SOURCE_IDS.infra_roads,
+        layout: { visibility: "none" },
+        paint: { "line-color": "#a8a8a0", "line-width": 1.5, "line-opacity": 0.8 },
+      });
+
+      map.addSource(MAP_SOURCE_IDS.infra_bridges, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "infra-bridges-line",
+        type: "line",
+        source: MAP_SOURCE_IDS.infra_bridges,
+        layout: { visibility: "none" },
+        paint: { "line-color": "#d4a017", "line-width": 3.5, "line-opacity": 0.9 },
+      });
+
+      map.addSource(MAP_SOURCE_IDS.infra_fuel, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "infra-fuel-circle",
+        type: "circle",
+        source: MAP_SOURCE_IDS.infra_fuel,
+        layout: { visibility: "none" },
+        paint: {
+          "circle-radius": 6,
+          "circle-color": "#e8622a",
+          "circle-stroke-color": "#111111",
+          "circle-stroke-width": 1,
+          "circle-opacity": 0.9,
+        },
+      });
+
+      map.addSource(MAP_SOURCE_IDS.infra_power, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "infra-power-line",
+        type: "line",
+        source: MAP_SOURCE_IDS.infra_power,
+        layout: { visibility: "none" },
+        paint: { "line-color": "#d4d020", "line-width": 1.5, "line-opacity": 0.85 },
+      });
+
+      map.addSource(MAP_SOURCE_IDS.infra_healthcare, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "infra-healthcare-circle",
+        type: "circle",
+        source: MAP_SOURCE_IDS.infra_healthcare,
+        layout: { visibility: "none" },
+        paint: {
+          "circle-radius": 7,
+          "circle-color": "#c0392b",
+          "circle-stroke-color": "#111111",
+          "circle-stroke-width": 1,
+          "circle-opacity": 0.9,
+        },
+      });
+
+      // ── Surveillance ──────────────────────────────────────────────────────
+      map.addSource(MAP_SOURCE_IDS.cellular, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "cellular-circle",
+        type: "circle",
+        source: MAP_SOURCE_IDS.cellular,
+        layout: { visibility: "none" },
+        paint: {
+          "circle-radius": 5,
+          "circle-color": "#2a9d8a",
+          "circle-stroke-color": "#111111",
+          "circle-stroke-width": 1,
+          "circle-opacity": 0.85,
+        },
+      });
+
+      map.addSource(MAP_SOURCE_IDS.satellites, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "satellites-circle",
+        type: "circle",
+        source: MAP_SOURCE_IDS.satellites,
+        layout: { visibility: "none" },
+        paint: {
+          "circle-radius": 9,
+          "circle-color": "#8060c8",
+          "circle-stroke-color": "#c0b0f0",
+          "circle-stroke-width": 1.5,
+          "circle-opacity": 0.9,
         },
       });
 
@@ -415,6 +571,7 @@ export default function OperationsPage() {
     };
   }, [aoi]);
 
+  // Push updated GeoJSON data into each MapLibre source
   useEffect(() => {
     if (!mapReady) return;
     const map = mapRef.current;
@@ -429,6 +586,7 @@ export default function OperationsPage() {
     }
   }, [mapReady, sourceData]);
 
+  // Sync layer visibility + opacity into MapLibre
   useEffect(() => {
     if (!mapReady) return;
     const map = mapRef.current;
@@ -448,34 +606,56 @@ export default function OperationsPage() {
     }
   }, [layers, mapReady]);
 
+  // Sync loadState badges with backend stage status.
+  // Does NOT include `layers` in deps — avoids re-running when loadState itself changes.
+  useEffect(() => {
+    setLayers((prev) =>
+      prev.map((l) => {
+        const stageName = SOURCE_STAGE[l.id];
+        if (!stageName) return l;
+        const status = stages[stageName];
+        if (status === "error") return { ...l, loadState: "error" as const };
+        // "done" loadState is set by the fetch effect after data arrives
+        if (status === "done") return l;
+        // pending / running / undefined → loading
+        return { ...l, loadState: "loading" as const };
+      })
+    );
+  }, [stages]);
+
+  // Fetch data for every source whose stage is done. No visibility check —
+  // data is pre-loaded so toggling a layer on is instant.
+  // `layers` intentionally NOT in deps: including it would abort in-progress
+  // fetches every time loadState or opacity changes.
   useEffect(() => {
     if (!sourceArea || !mapReady) return;
-
     const controller = new AbortController();
-    const visibleSourceLayers = layers.filter((layer) => layer.visible && SOURCE_STAGE[layer.id]);
 
-    for (const layer of visibleSourceLayers) {
-      const stageName = SOURCE_STAGE[layer.id];
-      if (stages[stageName] === "error") {
-        setLayerHasData(layer.id, false);
-        continue;
-      }
+    for (const source of SOURCES) {
+      const stageName = SOURCE_STAGE[source.id];
+      if (!stageName) continue;
       if (stages[stageName] !== "done") continue;
-      if (loadedSources.current.has(layer.id)) continue;
+      if (loadedSources.current.has(source.id)) continue;
 
-      loadSource<FeatureCollection>(layer.id, sourceArea, controller.signal)
+      loadedSources.current.add(source.id);
+
+      loadSource<FeatureCollection>(source.id, sourceArea, controller.signal)
         .then((fc) => {
-          loadedSources.current.add(layer.id);
-          setSourceData((prev) => ({ ...prev, [layer.id]: fc }));
-          setLayerHasData(layer.id, (fc.features ?? []).length > 0);
+          setSourceData((prev) => ({ ...prev, [source.id]: fc }));
+          setLayerHasData(source.id, (fc.features ?? []).length > 0);
+          setLayerLoadState(source.id, "ready");
         })
-        .catch(() => {
-          setLayerHasData(layer.id, false);
+        .catch((err) => {
+          if ((err as Error)?.name === "AbortError") {
+            loadedSources.current.delete(source.id);
+            return;
+          }
+          setLayerLoadState(source.id, "error");
         });
     }
 
     return () => controller.abort();
-  }, [layers, mapReady, sourceArea, stages]);
+  }, [stages, sourceArea, mapReady]);
 
   function newMission() {
     sessionStorage.clear();
@@ -487,7 +667,9 @@ export default function OperationsPage() {
       title: "Natural Filters",
       layers: layers.filter((l) => BASE_IDS.includes(l.id) || ATMOS_IDS.includes(l.id)),
     },
-    { title: "Demographic", layers: layers.filter((l) => DEMO_IDS.includes(l.id)) },
+    { title: "Demographic",     layers: layers.filter((l) => DEMO_IDS.includes(l.id)) },
+    { title: "Infrastructure",  layers: layers.filter((l) => INFRA_IDS.includes(l.id)) },
+    { title: "Surveillance",    layers: layers.filter((l) => SURV_IDS.includes(l.id)) },
   ];
 
   const activeCount =
@@ -497,7 +679,7 @@ export default function OperationsPage() {
 
   const exportLegends: ExportLegendState = useMemo(() => {
     const naturalFilters = layers.filter((l) => l.visible).map((l) => l.label);
-    const infrastructureFilters = Array.from(infraSelected).map((id) => infraLabelById[id] ?? id);
+    const infrastructureFilters = Array.from(infraSelected).map((id) => id);
 
     const derivedLabelByKey: Record<string, string> = {};
     for (const capability of capabilities) {
@@ -512,7 +694,7 @@ export default function OperationsPage() {
       infrastructureFilters,
       derivedFilters,
     };
-  }, [capabilities, derivedSelected, infraLabelById, infraSelected, layers]);
+  }, [capabilities, derivedSelected, infraSelected, layers]);
 
   if (!aoi) return null;
 
