@@ -138,11 +138,51 @@ export default function ExportIpbReportModal({
           maxHeight: "92vh",
           background: "var(--color-bg-panel)",
           border: "1px solid var(--color-border-default)",
-          display: "grid",
-          gridTemplateColumns: "minmax(280px, 0.95fr) minmax(360px, 1.2fr)",
+          display: "flex",
+          flexDirection: "column",
           overflow: "hidden",
         }}
       >
+        {/* Header */}
+        <div
+          style={{
+            flexShrink: 0,
+            height: 40,
+            padding: "0 12px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            borderBottom: "1px solid var(--color-border-default)",
+            background: "var(--color-bg-panel)",
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "var(--font-heading)",
+              fontSize: 12,
+              fontWeight: 600,
+              letterSpacing: "0.15em",
+              textTransform: "uppercase",
+              color: "var(--color-text-primary)",
+            }}
+          >
+            Export IPB Report
+          </div>
+          <button className="btn" type="button" onClick={onClose}>
+            ✕ Close
+          </button>
+        </div>
+
+        {/* Body — two scrollable columns */}
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "grid",
+            gridTemplateColumns: "minmax(280px, 0.95fr) minmax(360px, 1.2fr)",
+            overflow: "hidden",
+          }}
+        >
         <div style={{ borderRight: "1px solid var(--color-border-subtle)", overflowY: "auto", padding: "12px" }}>
           <div style={{ display: "grid", gap: 10 }}>
             <FieldLabel text="Report Title" />
@@ -218,9 +258,9 @@ export default function ExportIpbReportModal({
             )}
           </div>
 
-          <LegendBlock title="Natural Filters" values={legends.naturalFilters} />
+          <LegendBlock title="Capabilities" values={legends.derivedFilters} />
+          <LegendBlock title="Natural Features" values={legends.naturalFilters} />
           <LegendBlock title="Infrastructure" values={legends.infrastructureFilters} />
-          <LegendBlock title="Derived Metrics" values={legends.derivedFilters} />
 
           <div style={{ border: "1px solid var(--color-border-subtle)", padding: "8px", display: "grid", gap: 6 }}>
             <div style={{ fontFamily: "var(--font-ui)", fontSize: 13, color: "var(--color-text-primary)" }}>{fields.reportTitle}</div>
@@ -244,23 +284,50 @@ export default function ExportIpbReportModal({
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button className="btn" onClick={onClose}>
-              Close
+        </div>
+        </div>
+
+        {/* Sticky footer — always visible regardless of content height */}
+        <div
+          style={{
+            flexShrink: 0,
+            minHeight: 56,
+            padding: "8px 12px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            borderTop: "1px solid var(--color-border-default)",
+            background: "var(--color-bg-panel)",
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "var(--font-data)",
+              fontSize: 11,
+              color: "var(--color-text-secondary)",
+            }}
+          >
+            {totalLegendCount} active legend{totalLegendCount === 1 ? "" : "s"} · {fields.reportTitle || "Untitled report"}
+          </div>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            <button className="btn" type="button" onClick={onClose}>
+              Cancel
             </button>
             <button
               className="btn btn--active"
+              type="button"
               onClick={() => {
                 downloadIpbReportPdf({
                   screenshotDataUrl,
+                  capabilityFilters: legends.derivedFilters,
                   naturalFilters: legends.naturalFilters,
                   infrastructureFilters: legends.infrastructureFilters,
-                  derivedFilters: legends.derivedFilters,
                   fields,
                 });
               }}
             >
-              Download PDF
+              ⤓ Download PDF
             </button>
           </div>
         </div>

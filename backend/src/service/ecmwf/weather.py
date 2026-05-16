@@ -26,6 +26,7 @@ Proxy API:    Open-Meteo (https://open-meteo.com) — EU-hosted, no key required
 
 import logging
 import math
+import asyncio
 
 import pandas as pd
 
@@ -121,32 +122,34 @@ def _grid_points(bbox: BBox) -> list[tuple[float, float]]:
 async def fetch_weather(aoi_id: str, bbox: BBox) -> dict:
     """Fetch area weather grid and write as Parquet.  Returns a summary dict."""
     points = _grid_points(bbox)
-    lats = [p[0] for p in points]
-    lons = [p[1] for p in points]
 
-    params = {
-        "latitude":       ",".join(str(v) for v in lats),
-        "longitude":      ",".join(str(v) for v in lons),
-        "hourly":         ",".join(_HOURLY_PARAMS),
-        "forecast_days":  3,
-        "windspeed_unit": "ms",
-        "models":         "ecmwf_ifs04",
-        "timezone":       "Europe/Helsinki",
-    }
-
-    try:
+    async def _fetch_point(lat: float, lon: float) -> dict:
+        params = {
+            "latitude":       lat,
+            "longitude":      lon,
+            "hourly":         ",".join(_HOURLY_PARAMS),
+            "forecast_days":  3,
+            "windspeed_unit": "ms",
+            "models":         "ecmwf_ifs04",
+            "timezone":       "Europe/Helsinki",
+        }
         resp = await client.get(_OPEN_METEO_URL, params=params)
         resp.raise_for_status()
-        raw = resp.json()
+        return resp.json()
 
-        results: list[dict] = raw if isinstance(raw, list) else [raw]
-        times: list[str] = results[0].get("hourly", {}).get("time", [])
+    try:
+        semaphore = asyncio.Semaphore(8)
+
+        async def _bounded_fetch(lat: float, lon: float) -> dict:
+          async with semaphore:
+              return await _fetch_point(lat, lon)
+
+        results = await asyncio.gather(*[_bounded_fetch(lat, lon) for lat, lon in points])
+        times: list[str] = results[0].get("hourly", {}).get("time", []) if results else []
 
         rows = []
-        for result in results:
+        for (pt_lat, pt_lon), result in zip(points, results):
             hourly = result.get("hourly", {})
-            pt_lon = result.get("longitude")
-            pt_lat = result.get("latitude")
             for t_idx, time_str in enumerate(times):
                 row: dict = {"lon": pt_lon, "lat": pt_lat, "valid_time": time_str}
                 for param in _HOURLY_PARAMS:
@@ -172,11 +175,11 @@ async def fetch_weather(aoi_id: str, bbox: BBox) -> dict:
             aoi_id, "weather",
             source="Open-Meteo / ECMWF IFS",
             confidence="high",
-            feature_counts={"grid_points": len(results), "time_steps": len(times)},
+            feature_counts={"grid_points": len(points), "time_steps": len(times)},
         )
         return {
             "source": "Open-Meteo / ECMWF IFS",
-            "grid_points": len(results),
+            "grid_points": len(points),
             "time_steps": len(times),
         }
 

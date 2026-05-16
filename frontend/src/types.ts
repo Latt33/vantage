@@ -7,6 +7,8 @@ export interface BoundingBox {
 
 export type AppMode = "select" | "confirm" | "analyze";
 
+export type WeatherMetricId = "cloudAmount" | "cloudHeight" | "visibility" | "temperature" | "windSpeed";
+
 export const MAX_AOI_KM = 30;
 
 /**

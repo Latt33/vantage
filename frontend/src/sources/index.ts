@@ -26,11 +26,20 @@ function getBackendAoiId(area: AreaContext): string {
 }
 
 async function fetchJson(path: string, signal?: AbortSignal): Promise<unknown> {
-  const res = await fetch(`${API_BASE_URL}${path}`, { signal });
-  if (!res.ok) {
-    throw new Error(`request failed (${res.status}): ${path}`);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 30000);
+  if (signal) {
+    signal.addEventListener("abort", () => controller.abort(), { once: true });
   }
-  return res.json();
+  try {
+    const res = await fetch(`${API_BASE_URL}${path}`, { signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`request failed (${res.status}): ${path}`);
+    }
+    return res.json();
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 function asFeatureCollection(value: unknown): FeatureCollection {
@@ -51,18 +60,113 @@ function isForestFeature(feature: Feature<Geometry>): boolean {
   return text.includes("forest") || text.includes("wood") || text.includes("mets");
 }
 
+function classifyLandFeature(feature: Feature<Geometry>): Feature<Geometry> {
+  const values = Object.values(feature.properties ?? {});
+  const text = values.map(v => String(v).toLowerCase()).join(" ");
+
+  let landClass = "other";
+  let landLabel = "Other";
+
+  if (text.includes("forest") || text.includes("wood") || text.includes("mets")) {
+    landClass = "forest";
+    landLabel = "Forest";
+  } else if (text.includes("building") || text.includes("rakenn") || text.includes("house") || text.includes("built")) {
+    landClass = "built";
+    landLabel = "Built-up";
+  } else if (text.includes("water") || text.includes("lake") || text.includes("river") || text.includes("vesi")) {
+    landClass = "water";
+    landLabel = "Water";
+  } else if (text.includes("swamp") || text.includes("wetland") || text.includes("suo")) {
+    landClass = "wetland";
+    landLabel = "Wetland";
+  } else if (text.includes("field") || text.includes("grass") || text.includes("meadow") || text.includes("pelto") || text.includes("niitty")) {
+    landClass = "open";
+    landLabel = "Open Land";
+  } else if (text.includes("rock") || text.includes("kallio")) {
+    landClass = "rock";
+    landLabel = "Rock";
+  }
+
+  return {
+    ...feature,
+    properties: {
+      ...(feature.properties ?? {}),
+      land_class: landClass,
+      land_label: landLabel,
+    },
+  };
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+function gridPointsToCells(fc: FeatureCollection): FeatureCollection {
+  const points = fc.features.filter((f) => f.geometry?.type === "Point" && Array.isArray((f.geometry as { coordinates?: unknown }).coordinates));
+  if (points.length === 0) return fc;
+
+  const lonValues = [...new Set(points.map((f) => Number((f.geometry as unknown as { coordinates: [number, number] }).coordinates[0])))]
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  const latValues = [...new Set(points.map((f) => Number((f.geometry as unknown as { coordinates: [number, number] }).coordinates[1])))]
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+
+  const lonDiffs: number[] = [];
+  const latDiffs: number[] = [];
+  for (let i = 1; i < lonValues.length; i++) {
+    const diff = Math.abs(lonValues[i] - lonValues[i - 1]);
+    if (diff > 0) lonDiffs.push(diff);
+  }
+  for (let i = 1; i < latValues.length; i++) {
+    const diff = Math.abs(latValues[i] - latValues[i - 1]);
+    if (diff > 0) latDiffs.push(diff);
+  }
+
+  const halfLon = (median(lonDiffs) || 0.00005) / 2;
+  const halfLat = (median(latDiffs) || 0.00005) / 2;
+
+  return {
+    type: "FeatureCollection",
+    features: points.map((feature) => {
+      const [lon, lat] = (feature.geometry as unknown as { coordinates: [number, number] }).coordinates;
+      return {
+        type: "Feature",
+        geometry: {
+          type: "Polygon",
+          coordinates: [[
+            [lon - halfLon, lat - halfLat],
+            [lon + halfLon, lat - halfLat],
+            [lon + halfLon, lat + halfLat],
+            [lon - halfLon, lat + halfLat],
+            [lon - halfLon, lat - halfLat],
+          ]],
+        },
+        properties: { ...(feature.properties ?? {}) },
+      };
+    }),
+  };
+}
+
 // ── Base layers ──────────────────────────────────────────────────────────────
 
 async function loadTerrain(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
   const aoiId = getBackendAoiId(area);
   const raw = await fetchJson(`/api/aoi/${aoiId}/dem/elevation`, signal);
-  return asFeatureCollection(raw);
+  return gridPointsToCells(asFeatureCollection(raw));
 }
 
 async function loadLandcover(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
   const aoiId = getBackendAoiId(area);
   const json = await fetchJson(`/api/aoi/${aoiId}/land/cover`, signal);
-  return asFeatureCollection(json);
+  const fc = asFeatureCollection(json);
+  return {
+    ...fc,
+    features: fc.features.map(classifyLandFeature),
+  };
 }
 
 async function loadForest(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
@@ -116,10 +220,12 @@ async function loadWeather(area: AreaContext, signal?: AbortSignal): Promise<Fea
   const firstTime = times[0];
   if (!firstTime) return fc;
 
-  return {
+  const filtered = {
     ...fc,
     features: fc.features.filter((f) => f.properties?.valid_time === firstTime),
   };
+
+  return gridPointsToCells(filtered);
 }
 
 // ── Infrastructure ────────────────────────────────────────────────────────────

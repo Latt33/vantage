@@ -1,11 +1,16 @@
 import React, { useState } from "react";
 import { INFRASTRUCTURE, InfraNode } from "../data/infrastructure";
-import { LayerConfig, LayerId, LayerSection } from "../types";
+import { LayerConfig, LayerId, LayerSection, WeatherMetricId } from "../types";
 
 interface LayerPanelProps {
   sections: LayerSection[];
   infrastructureSelected: Set<string>;
   onInfrastructureToggle: (id: string) => void;
+  infraEnabled: Set<string>;
+  infraStatusById: Record<string, { loadState?: LayerConfig["loadState"]; hasData?: boolean }>;
+  weatherMetrics: Record<WeatherMetricId, boolean>;
+  onWeatherMetricToggle: (id: WeatherMetricId) => void;
+  roadLegendVisible: boolean;
   onChange: (id: LayerId, patch: Partial<LayerConfig>) => void;
 }
 
@@ -13,6 +18,11 @@ export default function LayerPanel({
   sections,
   infrastructureSelected,
   onInfrastructureToggle,
+  infraEnabled,
+  infraStatusById,
+  weatherMetrics,
+  onWeatherMetricToggle,
+  roadLegendVisible,
   onChange,
 }: LayerPanelProps) {
   return (
@@ -44,7 +54,12 @@ export default function LayerPanel({
         <div key={section.title}>
           {section.title !== "Demographic" && <SectionHeader title={section.title} />}
           {section.layers.map(layer => (
-            <LayerRow key={layer.id} layer={layer} onChange={onChange} />
+            <div key={layer.id}>
+              <LayerRow layer={layer} onChange={onChange} />
+              {layer.id === "weather" && layer.visible && (
+                <WeatherControls metrics={weatherMetrics} onToggle={onWeatherMetricToggle} />
+              )}
+            </div>
           ))}
         </div>
       ))}
@@ -57,8 +72,23 @@ export default function LayerPanel({
             node={node}
             selected={infrastructureSelected}
             onToggle={onInfrastructureToggle}
+            enabled={infraEnabled.has(node.id)}
+            loadState={infraStatusById[node.id]?.loadState}
+            hasData={infraStatusById[node.id]?.hasData}
           />
         ))}
+        {roadLegendVisible && (
+          <div style={{ padding: "8px 12px", borderTop: "1px dashed var(--color-border-subtle)" }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-secondary)", marginBottom: 6 }}>Road size</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <LegendSwatch color="#ffd47a" label="small" />
+              <LegendSwatch color="#f1c40f" label="local" />
+              <LegendSwatch color="#d35400" label="primary" />
+              <LegendSwatch color="#c0392b" label="major" />
+              <LegendSwatch color="#7a1919" label="highway" />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -170,11 +200,22 @@ interface InfraRowProps {
   selected: Set<string>;
   onToggle: (id: string) => void;
   depth?: number;
+  enabled?: boolean;
+  loadState?: LayerConfig["loadState"];
+  hasData?: boolean;
 }
 
-function InfraRow({ node, selected, onToggle, depth = 0 }: InfraRowProps) {
+function InfraRow({ node, selected, onToggle, depth = 0, enabled = true, loadState, hasData }: InfraRowProps) {
   const [expanded, setExpanded] = useState(false);
   const hasChildren = !!node.children && node.children.length > 0;
+  let badge: React.ReactNode = null;
+  if (loadState === "error") {
+    badge = <span className="badge badge--crit">Error</span>;
+  } else if (loadState === "ready") {
+    if (hasData !== true) badge = <span className="badge badge--warn">No Data</span>;
+  } else if (loadState === "loading") {
+    badge = <span className="badge badge--info">Loading</span>;
+  }
 
   return (
     <div style={{ borderBottom: depth === 0 ? "1px solid var(--color-border-subtle)" : "none" }}>
@@ -192,6 +233,8 @@ function InfraRow({ node, selected, onToggle, depth = 0 }: InfraRowProps) {
           className="toggle"
           checked={selected.has(node.id)}
           onChange={() => onToggle(node.id)}
+          disabled={!enabled}
+          title={enabled ? undefined : "Not implemented"}
         />
         <div style={{ flex: 1, minWidth: 0, lineHeight: 1.1 }}>
           <div
@@ -201,7 +244,8 @@ function InfraRow({ node, selected, onToggle, depth = 0 }: InfraRowProps) {
               color: "var(--color-text-primary)",
             }}
           >
-            {node.label}
+            <span>{node.label}</span>{" "}
+            {badge}
           </div>
           {node.sublabel && (
             <div
@@ -237,8 +281,52 @@ function InfraRow({ node, selected, onToggle, depth = 0 }: InfraRowProps) {
       </div>
 
       {expanded && hasChildren && node.children!.map(child => (
-        <InfraRow key={child.id} node={child} selected={selected} onToggle={onToggle} depth={depth + 1} />
+        <InfraRow
+          key={child.id}
+          node={child}
+          selected={selected}
+          onToggle={onToggle}
+          depth={depth + 1}
+          loadState={loadState}
+          hasData={hasData}
+        />
       ))}
+    </div>
+  );
+}
+
+function WeatherControls({ metrics, onToggle }: { metrics: Record<WeatherMetricId, boolean>; onToggle: (id: WeatherMetricId) => void }) {
+  const items: Array<{ id: WeatherMetricId; label: string; sublabel: string }> = [
+    { id: "cloudAmount", label: "Cloud Amount", sublabel: "Cloud cover percentage" },
+    { id: "cloudHeight", label: "Cloud Height", sublabel: "High cloud layer proxy" },
+    { id: "visibility", label: "Visibility", sublabel: "Visibility range" },
+    { id: "temperature", label: "Temperature", sublabel: "2 m air temperature" },
+    { id: "windSpeed", label: "Wind Speed", sublabel: "10 m wind speed" },
+  ];
+
+  return (
+    <div style={{ padding: "6px 12px 10px 36px", display: "grid", gap: 6, borderBottom: "1px solid var(--color-border-subtle)" }}>
+      <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--color-text-secondary)" }}>
+        Weather Settings
+      </div>
+      {items.map((item) => (
+        <label key={item.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
+          <input type="checkbox" className="toggle" checked={metrics[item.id]} onChange={() => onToggle(item.id)} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontFamily: "var(--font-ui)", fontSize: 12, color: "var(--color-text-primary)" }}>{item.label}</div>
+            <div style={{ fontFamily: "var(--font-data)", fontSize: 10, color: "var(--color-text-secondary)" }}>{item.sublabel}</div>
+          </div>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function LegendSwatch({ color, label }: { color: string; label: string }) {
+  return (
+    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      <div style={{ width: 18, height: 10, background: color, border: "1px solid rgba(0,0,0,0.15)" }} />
+      <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{label}</div>
     </div>
   );
 }

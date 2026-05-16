@@ -17,6 +17,7 @@ Each tower is a Point Feature with properties:
 
 import logging
 import os
+import math
 
 from src.service._shared.bbox import BBox
 from src.service._shared.client import client
@@ -24,10 +25,57 @@ from src.service._shared.storage import category_file, write_category_meta, writ
 
 logger = logging.getLogger(__name__)
 
-OPENCELLID_API_KEY = os.getenv("OPENCELLID_API_KEY", "")
+OPENCELLID_API_KEY = os.getenv("OPENCELLID_API_KEY") or os.getenv("CELLS_API_KEY") or ""
 _OPENCELLID_URL = "https://opencellid.org/cell/getInArea"
 
 _FINLAND_MCC = 244
+_MAX_BBOX_SQM = 4_000_000
+
+
+def _bbox_area_m2(bbox: BBox) -> float:
+    mid_lat = (bbox.min_lat + bbox.max_lat) / 2
+    lat_m = abs(bbox.max_lat - bbox.min_lat) * 111_320.0
+    lon_m = abs(bbox.max_lon - bbox.min_lon) * 111_320.0 * math.cos(math.radians(mid_lat))
+    return abs(lat_m * lon_m)
+
+
+def _split_bbox(bbox: BBox) -> list[BBox]:
+    mid_lon = (bbox.min_lon + bbox.max_lon) / 2
+    mid_lat = (bbox.min_lat + bbox.max_lat) / 2
+    return [
+        BBox(bbox.min_lon, bbox.min_lat, mid_lon, mid_lat),
+        BBox(mid_lon, bbox.min_lat, bbox.max_lon, mid_lat),
+        BBox(bbox.min_lon, mid_lat, mid_lon, bbox.max_lat),
+        BBox(mid_lon, mid_lat, bbox.max_lon, bbox.max_lat),
+    ]
+
+
+async def _fetch_towers_bbox(bbox: BBox, limit: int = 2000, depth: int = 0) -> list[dict]:
+    if _bbox_area_m2(bbox) > _MAX_BBOX_SQM and depth < 4:
+        towers: list[dict] = []
+        for part in _split_bbox(bbox):
+            towers.extend(await _fetch_towers_bbox(part, limit=limit, depth=depth + 1))
+        return towers
+
+    params = {
+        "key": OPENCELLID_API_KEY,
+        "BBOX": f"{bbox.min_lat},{bbox.min_lon},{bbox.max_lat},{bbox.max_lon}",
+        "mcc": _FINLAND_MCC,
+        "format": "json",
+        "limit": limit,
+    }
+    resp = await client.get(_OPENCELLID_URL, params=params)
+    resp.raise_for_status()
+    data = resp.json()
+    towers = data.get("cells", [])
+
+    if len(towers) >= limit and depth < 4:
+        merged: list[dict] = []
+        for part in _split_bbox(bbox):
+            merged.extend(await _fetch_towers_bbox(part, limit=limit, depth=depth + 1))
+        return merged
+
+    return towers
 
 
 async def fetch_towers(aoi_id: str, bbox: BBox) -> dict:
@@ -44,22 +92,10 @@ async def fetch_towers(aoi_id: str, bbox: BBox) -> dict:
         )
         return {"source": "OpenCelliD", "error": "Missing API Key"}
 
-    params = {
-        "key":    OPENCELLID_API_KEY,
-        "BBOX":   f"{bbox.min_lat},{bbox.min_lon},{bbox.max_lat},{bbox.max_lon}",
-        "mcc":    _FINLAND_MCC,
-        "format": "json",
-        "limit":  2000,
-    }
-
     try:
-        resp = await client.get(_OPENCELLID_URL, params=params)
-        resp.raise_for_status()
-        data = resp.json()
-
-        towers = data.get("cells", [])
+        all_towers = await _fetch_towers_bbox(bbox)
         features = []
-        for t in towers:
+        for t in all_towers:
             lon = t.get("lon")
             lat = t.get("lat")
             if lon is None or lat is None:
