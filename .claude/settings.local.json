@@ -7,7 +7,8 @@
       "PowerShell(Get-ChildItem \"c:/Users/attel/Desktop/hackathons/defence/backend/data\" -Directory | ForEach-Object { $landMeta = Join-Path $_.FullName \"land\\\\meta.json\"; if \\(Test-Path $landMeta\\) { Remove-Item $landMeta -Force; Write-Host \"Removed $landMeta\" } })",
       "Bash(docker compose *)",
       "Bash(Remove-Item \"c:\\\\Users\\\\attel\\\\Desktop\\\\hackathons\\\\defence\\\\backend\\\\src\\\\service\\\\osm\\\\rail.py\")",
-      "Bash(rm \"c:/Users/attel/Desktop/hackathons/defence/backend/src/service/cache_manager.py\" \"c:/Users/attel/Desktop/hackathons/defence/backend/src/service/nls/terrain.py\")"
+      "Bash(rm \"c:/Users/attel/Desktop/hackathons/defence/backend/src/service/cache_manager.py\" \"c:/Users/attel/Desktop/hackathons/defence/backend/src/service/nls/terrain.py\")",
+      "Bash(git status *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\attel\\Desktop\\hackathons\\defence\\backend\\src\\service"

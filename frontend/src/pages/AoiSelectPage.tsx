@@ -443,7 +443,7 @@ export default function AoiSelectPage() {
                       }}
                     >
                       <div style={{ fontFamily: "var(--font-heading)", fontSize: 11, color: "var(--color-text-primary)" }}>
-                        Area {idx + 1}
+                        {aoi.name ?? `Area ${idx + 1}`}
                       </div>
                       <div style={{ fontFamily: "var(--font-data)", fontSize: 9, color: "var(--color-text-dim)" }}>
                         {date}
@@ -453,7 +453,7 @@ export default function AoiSelectPage() {
                       type="button"
                       onClick={() => handleDeleteExisting(aoi)}
                       disabled={deletingAoiId === aoi.aoi_id}
-                      aria-label={`Delete Area ${idx + 1}`}
+                      aria-label={`Delete ${aoi.name ?? `Area ${idx + 1}`}`}
                       style={{
                         minWidth: 34,
                         background: "rgba(255,255,255,0.03)",

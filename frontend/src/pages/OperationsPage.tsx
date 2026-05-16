@@ -18,7 +18,7 @@ import ExportIpbReportModal, { ExportLegendState } from "../export/ExportIpbRepo
 import { cache } from "../registry/cache";
 import { SOURCES, loadSource } from "../sources";
 import { analysesForCapabilities } from "../analyses";
-import { fetchNextOverpass } from "../api/satelliteIntel";
+import { fetchTrajectories, CONSTELLATION_COLORS, CONSTELLATION_COLOR_FALLBACK, CONSTELLATION_LABELS } from "../api/satelliteIntel";
 
 const SOURCE_ACCENTS: Record<string, string> = {
   terrain:     "#8a7a5a",
@@ -230,6 +230,12 @@ export default function OperationsPage() {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [refreshingAoi, setRefreshingAoi] = useState(false);
 
+  // Satellite trajectory state — fetched on-demand when a constellation is toggled on.
+  const [satTracks, setSatTracks] = useState<FeatureCollection>(EMPTY_FC);
+  const [satTracksLoadState, setSatTracksLoadState] = useState<"idle" | "loading" | "done">("idle");
+  const satTracksLoaded = useRef(false);
+  const satTracksLoading = useRef(false);
+
   const [jobInfo, setJobInfo] = useState<JobInfo | null>(null);
   const [stages, setStages] = useState<Record<string, string>>(() => (persistedAoiId ? buildCompletedStages() : {}));
   const loadedSources = useRef<Set<string>>(new Set());
@@ -378,22 +384,30 @@ export default function OperationsPage() {
       const turningOn = !next.has(id);
       if (turningOn) next.add(id);
       else next.delete(id);
-
-      // Satellite intel filters are scoped as `satellite_intelligence:<sat_id>`.
-      // On check, kick off a placeholder fetch for the next overpass + imagery.
-      if (turningOn && aoi && id.startsWith("satellite_intelligence:")) {
-        const satelliteId = id.split(":", 2)[1];
-        fetchNextOverpass(satelliteId, aoi)
-          .then((pass) => {
-            console.info("[satellite-intel] next overpass", pass);
-          })
-          .catch(() => {
-            // Placeholder API — swallow until backend lands.
-          });
-      }
-
       return next;
     });
+
+    // Satellite intel filters are `satellite_intelligence:<constellation_id>`.
+    // Fetch trajectories once (all constellations in a single request) the
+    // first time any satellite filter is turned on.
+    if (id.startsWith("satellite_intelligence:") && activeAoiId && !satTracksLoaded.current && !satTracksLoading.current) {
+      satTracksLoading.current = true;
+      setSatTracksLoadState("loading");
+      fetchTrajectories(activeAoiId)
+        .then((fc) => {
+          setSatTracks(fc);
+          // Only mark as loaded when we got actual data — allows retry if
+          // the backend returned an empty collection (e.g. CelesTrak was down).
+          if ((fc.features ?? []).length > 0) satTracksLoaded.current = true;
+        })
+        .catch((err) => {
+          console.warn("[satellite-intel] trajectory fetch failed", err);
+        })
+        .finally(() => {
+          satTracksLoading.current = false;
+          setSatTracksLoadState("done");
+        });
+    }
   }
 
   function onExport() {
@@ -696,6 +710,13 @@ export default function OperationsPage() {
       });
 
       // ── Infrastructure ────────────────────────────────────────────────────
+      // NLS tieviiva kohdeluokka codes:
+      //   12111/12112 = moottoritie (motorway)
+      //   12121/12122 = valtatie (national highway)
+      //   12131/12132 = kantatie (trunk road)
+      //   12141/12142 = seututie (regional road)
+      //   12151–12153 = local/private/ferry → default
+      //   12311–12313 = winter road/path/cycle → default
       map.addSource(MAP_SOURCE_IDS.infra_roads, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
         id: "infra-roads-line",
@@ -703,22 +724,30 @@ export default function OperationsPage() {
         source: MAP_SOURCE_IDS.infra_roads,
         layout: { visibility: "none" },
         paint: {
-          // color by feature length (meters)
           "line-color": [
-            "interpolate", ["linear"], ["coalesce", ["get", "length_m"], 0],
-            0, "#ffd47a",
-            100, "#f1c40f",
-            1000, "#d35400",
-            5000, "#c0392b",
-            20000, "#7a1919",
-          ],
+            "match", ["coalesce", ["get", "kohdeluokka"], 0],
+            12111, "#7a1919",
+            12112, "#7a1919",
+            12121, "#c0392b",
+            12122, "#c0392b",
+            12131, "#d35400",
+            12132, "#d35400",
+            12141, "#f1c40f",
+            12142, "#f1c40f",
+            "#ffd47a",
+          ] as maplibregl.ExpressionSpecification,
           "line-width": [
-            "interpolate", ["linear"], ["coalesce", ["get", "length_m"], 0],
-            0, 0.8,
-            1000, 1.4,
-            5000, 2.4,
-            20000, 3.5,
-          ],
+            "match", ["coalesce", ["get", "kohdeluokka"], 0],
+            12111, 3.5,
+            12112, 3.5,
+            12121, 2.8,
+            12122, 2.8,
+            12131, 2.2,
+            12132, 2.2,
+            12141, 1.8,
+            12142, 1.8,
+            1.0,
+          ] as maplibregl.ExpressionSpecification,
           "line-opacity": 0.9,
         },
       });
@@ -785,6 +814,93 @@ export default function OperationsPage() {
         },
         paint: {
           "icon-opacity": 0.95,
+        },
+      });
+
+      // ── Satellite tracks ──────────────────────────────────────────────────
+      // One GeoJSON source holds all constellation ground tracks + overpass
+      // points. Layer filters control per-constellation visibility.
+      const constColorExpr = [
+        "match", ["get", "constellation"],
+        "sentinel_1",    CONSTELLATION_COLORS.sentinel_1,
+        "sentinel_2",    CONSTELLATION_COLORS.sentinel_2,
+        "landsat_9",     CONSTELLATION_COLORS.landsat_9,
+        "iceye_x",       CONSTELLATION_COLORS.iceye_x,
+        "planet_skysat", CONSTELLATION_COLORS.planet_skysat,
+        CONSTELLATION_COLOR_FALLBACK,
+      ] as maplibregl.ExpressionSpecification;
+
+      map.addSource("satellite-tracks-src", { type: "geojson", data: EMPTY_FC });
+
+      // Ground-track lines (LineString + MultiLineString)
+      map.addLayer({
+        id: "satellite-tracks-line",
+        type: "line",
+        source: "satellite-tracks-src",
+        filter: ["==", ["get", "feature_type"], "track"],
+        layout: { visibility: "none", "line-join": "round", "line-cap": "round" },
+        paint: {
+          "line-color": constColorExpr,
+          "line-width": 1.5,
+          "line-opacity": 0.75,
+          "line-dasharray": [4, 3],
+        },
+      });
+
+      // Overpass points (within 100 km of AOI)
+      map.addLayer({
+        id: "satellite-overpass-halo",
+        type: "circle",
+        source: "satellite-tracks-src",
+        filter: ["==", ["get", "feature_type"], "overpass"],
+        layout: { visibility: "none" },
+        paint: {
+          "circle-radius": 9,
+          "circle-color": constColorExpr,
+          "circle-opacity": 0.18,
+          "circle-stroke-width": 0,
+        },
+      });
+      map.addLayer({
+        id: "satellite-overpass-dot",
+        type: "circle",
+        source: "satellite-tracks-src",
+        filter: ["==", ["get", "feature_type"], "overpass"],
+        layout: { visibility: "none" },
+        paint: {
+          "circle-radius": 4,
+          "circle-color": constColorExpr,
+          "circle-opacity": 0.9,
+          "circle-stroke-color": "#000",
+          "circle-stroke-width": 0.8,
+        },
+      });
+
+      // Current satellite position (updated by time-slider)
+      map.addSource("satellite-cur-pos-src", { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "satellite-cur-pos-halo",
+        type: "circle",
+        source: "satellite-cur-pos-src",
+        layout: { visibility: "none" },
+        paint: {
+          "circle-radius": 14,
+          "circle-color": constColorExpr,
+          "circle-opacity": 0.25,
+          "circle-stroke-width": 0,
+        },
+      });
+      map.addLayer({
+        id: "satellite-cur-pos-dot",
+        type: "circle",
+        source: "satellite-cur-pos-src",
+        layout: { visibility: "none" },
+        paint: {
+          "circle-radius": 6,
+          "circle-color": constColorExpr,
+          "circle-opacity": 1,
+          "circle-stroke-color": "#fff",
+          "circle-stroke-width": 1.5,
         },
       });
 
@@ -1147,6 +1263,119 @@ export default function OperationsPage() {
     };
   }, [weatherDisplayData]);
 
+  // Active satellite constellation ids (e.g. "sentinel_1", "landsat_9")
+  const activeSatConstellations = useMemo(() => {
+    const active = new Set<string>();
+    for (const filterId of derivedSelected) {
+      if (filterId.startsWith("satellite_intelligence:")) {
+        active.add(filterId.split(":", 2)[1]);
+      }
+    }
+    return active;
+  }, [derivedSelected]);
+
+  // Constellations toggled on but with zero track features — only computed after fetch completes.
+  const satConstellationsNoData = useMemo(() => {
+    if (activeSatConstellations.size === 0 || satTracksLoadState !== "done") return new Set<string>();
+    const withTracks = new Set(
+      satTracks.features
+        .filter((f) => f.properties?.feature_type === "track")
+        .map((f) => f.properties?.constellation as string)
+        .filter(Boolean)
+    );
+    return new Set([...activeSatConstellations].filter((c) => !withTracks.has(c)));
+  }, [activeSatConstellations, satTracks, satTracksLoadState]);
+
+  // Push loaded satellite tracks into the MapLibre GeoJSON source.
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current;
+    if (!map) return;
+    const src = map.getSource("satellite-tracks-src") as maplibregl.GeoJSONSource | undefined;
+    src?.setData(satTracks);
+  }, [mapReady, satTracks]);
+
+  // Show / hide satellite layers and filter by active constellations.
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current;
+    if (!map) return;
+
+    const activeArr = Array.from(activeSatConstellations);
+    const hasActive = activeArr.length > 0;
+    const vis = hasActive ? "visible" : "none";
+    const filter: maplibregl.FilterSpecification = hasActive
+      ? ["in", ["get", "constellation"] as maplibregl.ExpressionSpecification, ["literal", activeArr] as maplibregl.ExpressionSpecification]
+      : ["==", 1, 0];
+
+    for (const layerId of [
+      "satellite-tracks-line",
+      "satellite-overpass-halo",
+      "satellite-overpass-dot",
+      "satellite-cur-pos-halo",
+      "satellite-cur-pos-dot",
+    ]) {
+      if (!map.getLayer(layerId)) continue;
+      map.setLayoutProperty(layerId, "visibility", vis);
+      if (layerId !== "satellite-cur-pos-halo" && layerId !== "satellite-cur-pos-dot") {
+        map.setFilter(layerId, filter);
+      }
+    }
+  }, [mapReady, activeSatConstellations]);
+
+  // Update the "current satellite position" dot as the time slider moves.
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current;
+    if (!map) return;
+
+    const src = map.getSource("satellite-cur-pos-src") as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+
+    const targetMs = Date.now() + timelineOffsetHours * 3_600_000;
+
+    const curFeatures: FeatureCollection["features"] = [];
+    for (const feature of satTracks.features) {
+      const props = feature.properties as Record<string, unknown> | null;
+      if (!props || props["feature_type"] !== "track") continue;
+      const constellation = props["constellation"] as string;
+      if (!activeSatConstellations.has(constellation)) continue;
+
+      const timestamps = props["timestamps"] as string[] | undefined;
+      if (!timestamps || timestamps.length === 0) continue;
+      const geom = feature.geometry;
+      let coords: [number, number][] = [];
+      if (geom.type === "LineString") {
+        coords = geom.coordinates as [number, number][];
+      } else if (geom.type === "MultiLineString") {
+        coords = (geom.coordinates as [number, number][][]).flat();
+      }
+      if (coords.length === 0 || coords.length !== timestamps.length) continue;
+
+      let bestIdx = 0;
+      let bestDiff = Infinity;
+      for (let i = 0; i < timestamps.length; i++) {
+        const diff = Math.abs(new Date(timestamps[i]).getTime() - targetMs);
+        if (diff < bestDiff) { bestDiff = diff; bestIdx = i; }
+      }
+
+      const altitudes = props["altitudes_km"] as number[] | undefined;
+      curFeatures.push({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: coords[bestIdx] },
+        properties: {
+          constellation,
+          satellite_name: props["satellite_name"],
+          norad_id: props["norad_id"],
+          timestamp: timestamps[bestIdx],
+          altitude_km: altitudes?.[bestIdx] ?? null,
+        },
+      });
+    }
+
+    src.setData({ type: "FeatureCollection", features: curFeatures });
+  }, [mapReady, satTracks, activeSatConstellations, timelineOffsetHours]);
+
   useEffect(() => {
     if (!mapReady) return;
     const map = mapRef.current;
@@ -1196,8 +1425,10 @@ export default function OperationsPage() {
         if (status === "done") {
           if (l.id === "satellite_imagery") return { ...l, loadState: "ready" as const, hasData: true };
           if (l.id === "terrain")          return { ...l, loadState: "ready" as const, hasData: true };
-          if (l.id === "forest")           return { ...l, loadState: "ready" as const, hasData: true };
-          if (l.id === "landcover")        return { ...l, loadState: "ready" as const, hasData: true };
+          // forest and landcover go through the fetch effect, which is the
+          // authoritative source for hasData — don't overwrite it here.
+          if (l.id === "forest")           return { ...l, loadState: "ready" as const };
+          if (l.id === "landcover")        return { ...l, loadState: "ready" as const };
           return l;
         }
         // pending / running / undefined → loading
@@ -1326,7 +1557,7 @@ export default function OperationsPage() {
 
         <div style={{ flex: 1, position: "relative" }}>
           <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
-          <MapLegend layers={layers} terrainElevRange={terrainElevRange} />
+          <MapLegend layers={layers} terrainElevRange={terrainElevRange} activeSatConstellations={activeSatConstellations} satConstellationsNoData={satConstellationsNoData} satLoadState={satTracksLoadState} />
         </div>
 
         <LayerPanel
@@ -1335,7 +1566,6 @@ export default function OperationsPage() {
           infraEnabled={infraEnabled}
           infraStatusById={infraStatusById}
           weatherAverages={weatherAverages}
-          roadLegendVisible={layers.some((l) => l.id === "infra_roads" && l.visible)}
           onInfrastructureToggle={toggleInfra}
           onChange={onLayerChange}
         />
@@ -1482,11 +1712,19 @@ const LAND_LEGEND: { label: string; color: string }[] = [
   { label: "Rock",      color: "rgb(122, 122, 122)" },
 ];
 
-function MapLegend({ layers, terrainElevRange }: { layers: LayerConfig[]; terrainElevRange: { min: number; max: number } | null }) {
-  const landcoverOn = layers.some((l) => l.id === "landcover" && l.visible);
-  const forestOn    = layers.some((l) => l.id === "forest"    && l.visible);
-  const terrainOn   = layers.some((l) => l.id === "terrain"   && l.visible);
-  if (!landcoverOn && !forestOn && !terrainOn) return null;
+function MapLegend({ layers, terrainElevRange, activeSatConstellations, satConstellationsNoData, satLoadState }: {
+  layers: LayerConfig[];
+  terrainElevRange: { min: number; max: number } | null;
+  activeSatConstellations: Set<string>;
+  satConstellationsNoData: Set<string>;
+  satLoadState: "idle" | "loading" | "done";
+}) {
+  const landcoverOn = layers.some((l) => l.id === "landcover"   && l.visible);
+  const forestOn    = layers.some((l) => l.id === "forest"      && l.visible);
+  const terrainOn   = layers.some((l) => l.id === "terrain"     && l.visible);
+  const roadsOn     = layers.some((l) => l.id === "infra_roads" && l.visible);
+  const satOn       = activeSatConstellations.size > 0;
+  if (!landcoverOn && !forestOn && !terrainOn && !roadsOn && !satOn) return null;
 
   return (
     <div
@@ -1555,6 +1793,46 @@ function MapLegend({ layers, terrainElevRange }: { layers: LayerConfig[]; terrai
             <span>Sparse</span>
             <span>Dense</span>
           </div>
+        </div>
+      )}
+
+      {roadsOn && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--color-text-dim)", marginBottom: 5 }}>
+            Road Class
+          </div>
+          {([
+            { color: "#ffd47a", label: "Local / track" },
+            { color: "#f1c40f", label: "Regional (seututie)" },
+            { color: "#d35400", label: "Trunk (kantatie)" },
+            { color: "#c0392b", label: "National (valtatie)" },
+            { color: "#7a1919", label: "Motorway" },
+          ] as const).map(({ color, label }) => (
+            <div key={label} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+              <div style={{ width: 20, height: 3, borderRadius: 1, background: color, flexShrink: 0 }} />
+              <span>{label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {satOn && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--color-text-dim)", marginBottom: 5 }}>
+            Satellite Tracks
+          </div>
+          {Array.from(activeSatConstellations).map((id) => {
+            const loading = satLoadState === "loading";
+            const noData  = satLoadState === "done" && satConstellationsNoData.has(id);
+            return (
+              <div key={id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, opacity: noData ? 0.5 : 1 }}>
+                <div style={{ width: 20, height: 3, borderRadius: 1, background: noData ? "#555" : (CONSTELLATION_COLORS[id] ?? CONSTELLATION_COLOR_FALLBACK), flexShrink: 0 }} />
+                <span style={{ flex: 1 }}>{CONSTELLATION_LABELS[id] ?? id}</span>
+                {loading && <span style={{ fontSize: 9, color: "var(--color-text-dim)", letterSpacing: "0.05em" }}>…</span>}
+                {noData  && <span style={{ fontSize: 9, color: "#f4a261", letterSpacing: "0.05em" }}>NO PASSES</span>}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

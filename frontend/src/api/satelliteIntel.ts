@@ -1,66 +1,38 @@
 /**
- * Satellite Intelligence — placeholder API.
+ * Satellite Intelligence API — real backend calls.
  *
- * This module exists so the UI can wire up the satellite_intelligence capability
- * end-to-end before any real backend exists. Every call returns mock data after
- * a small simulated delay so the panel behaves like a real fetch.
- *
- * Replace these stubs with real calls (e.g. N2YO, Spire, Planet Tasking) when
- * the backend lands.
+ * fetchTrajectories: fetches 24-hour SGP4 ground tracks from the backend.
+ * Returns a GeoJSON FeatureCollection with:
+ *   - LineString / MultiLineString features (feature_type: "track") per satellite
+ *   - Point features (feature_type: "overpass") at each 1-min pass within 100 km
  */
 
-import { BoundingBox } from "../types";
+import type { FeatureCollection } from "geojson";
+import { API_BASE_URL } from "../config";
 
-export interface NextOverpass {
-  satelliteId: string;
-  satelliteLabel: string;
-  nextPassUtc: string;        // ISO timestamp of the next AOI overpass
-  durationSeconds: number;    // how long the satellite is over the AOI
-  elevationDeg: number;       // max elevation above horizon during pass
-  azimuthDeg: number;         // direction of travel at peak
-  imageUrl: string | null;    // most recent image taken over this AOI (placeholder)
-  source: "placeholder";
+export async function fetchTrajectories(
+  aoiId: string,
+  signal?: AbortSignal,
+): Promise<FeatureCollection> {
+  const res = await fetch(`${API_BASE_URL}/api/aoi/${aoiId}/satellites/trajectories`, { signal });
+  if (!res.ok) throw new Error(`Trajectory fetch failed (${res.status})`);
+  return res.json() as Promise<FeatureCollection>;
 }
 
-const PLACEHOLDER_LABELS: Record<string, string> = {
-  sentinel_2:     "Sentinel-2",
-  sentinel_1:     "Sentinel-1",
-  landsat_9:      "Landsat 9",
-  iceye_x:        "ICEYE",
-  planet_skysat:  "SkySat",
+export const CONSTELLATION_COLORS: Record<string, string> = {
+  sentinel_1:     "#00b4d8",
+  sentinel_2:     "#52b788",
+  landsat_9:      "#f4a261",
+  iceye_x:        "#e9c46a",
+  planet_skysat:  "#c77dff",
 };
 
-function hash(input: string): number {
-  let h = 0;
-  for (let i = 0; i < input.length; i++) h = (h * 31 + input.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
+export const CONSTELLATION_COLOR_FALLBACK = "#aaaaaa";
 
-/**
- * Return mock next-overpass metadata for a satellite over the given AOI.
- * Deterministic on (satelliteId, bbox) so re-checking the same satellite
- * shows the same fake pass.
- */
-export async function fetchNextOverpass(
-  satelliteId: string,
-  bbox: BoundingBox,
-): Promise<NextOverpass> {
-  await new Promise((r) => setTimeout(r, 400));
-
-  const seed = hash(`${satelliteId}|${bbox.minLon},${bbox.minLat},${bbox.maxLon},${bbox.maxLat}`);
-  const minutesAhead = 30 + (seed % 720);             // 30 min … 12 h ahead
-  const durationSeconds = 90 + (seed % 360);          // 1.5 … 7.5 min over AOI
-  const elevationDeg = 25 + (seed % 60);              // 25° … 85°
-  const azimuthDeg = seed % 360;
-
-  return {
-    satelliteId,
-    satelliteLabel: PLACEHOLDER_LABELS[satelliteId] ?? satelliteId,
-    nextPassUtc: new Date(Date.now() + minutesAhead * 60_000).toISOString(),
-    durationSeconds,
-    elevationDeg,
-    azimuthDeg,
-    imageUrl: null,
-    source: "placeholder",
-  };
-}
+export const CONSTELLATION_LABELS: Record<string, string> = {
+  sentinel_1:    "Sentinel-1 (SAR)",
+  sentinel_2:    "Sentinel-2 (Optical)",
+  landsat_9:     "Landsat 9",
+  iceye_x:       "ICEYE-X (SAR)",
+  planet_skysat: "SkySat (Optical)",
+};

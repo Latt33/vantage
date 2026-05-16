@@ -24,12 +24,14 @@ from src.api.routers import traffic_cameras
 from src.api.routers import water
 from src.api.routers import weather
 from src.service._shared.client import close_client
+from src.service._shared.storage import ensure_test_areas
 
 load_dotenv()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    ensure_test_areas()
     yield
     await close_client()
 

@@ -159,5 +159,8 @@ async def delete_aoi_endpoint(aoi_id: str) -> dict:
     if meta is None:
         raise HTTPException(status_code=404, detail="AoI not found")
 
-    delete_aoi(aoi_id)
+    try:
+        delete_aoi(aoi_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     return {"aoi_id": aoi_id, "deleted": True}

@@ -102,6 +102,9 @@ def get_aoi_meta(aoi_id: str) -> dict | None:
 
 
 def delete_aoi(aoi_id: str) -> None:
+    from src.service._shared.test_areas import TEST_AREA_IDS  # late import avoids cycle
+    if aoi_id in TEST_AREA_IDS:
+        raise ValueError(f"Test area '{aoi_id}' is protected and cannot be deleted.")
     root = aoi_root(aoi_id)
     if root.exists():
         shutil.rmtree(root)
@@ -161,11 +164,15 @@ def cleanup_old_aois(max_age_days: int = 30) -> int:
     if not DATA_ROOT.exists():
         return 0
 
+    from src.service._shared.test_areas import TEST_AREA_IDS  # late import avoids cycle
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
     removed = 0
     for d in DATA_ROOT.iterdir():
         if not (d.is_dir() and (d / "meta.json").exists()):
             continue
+        if d.name in TEST_AREA_IDS:
+            continue  # test areas are always kept
         meta = read_json(d / "meta.json")
         if not meta:
             continue
@@ -179,6 +186,39 @@ def cleanup_old_aois(max_age_days: int = 30) -> int:
             logger.warning("cleanup_old_aois: skipped %s — %s", d.name, exc)
 
     return removed
+
+
+# ---------------------------------------------------------------------------
+# Test area bootstrap
+# ---------------------------------------------------------------------------
+
+def ensure_test_areas() -> None:
+    """Create meta.json for each test area if it doesn't already exist.
+
+    Called at app startup so test areas survive a fresh checkout with an
+    empty data/ directory. Safe to call repeatedly — existing dirs are
+    left untouched.
+    """
+    from src.service._shared.test_areas import TEST_AREAS
+    for area in TEST_AREAS:
+        root = aoi_root(area.aoi_id)
+        meta_path = root / "meta.json"
+        if meta_path.exists():
+            continue
+        ensure_dir(root)
+        meta = {
+            "aoi_id": area.aoi_id,
+            "name": area.name,
+            "bbox": {
+                "min_lon": area.bbox.min_lon,
+                "min_lat": area.bbox.min_lat,
+                "max_lon": area.bbox.max_lon,
+                "max_lat": area.bbox.max_lat,
+            },
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "test_area": True,
+        }
+        write_json(meta_path, meta)
 
 
 # ---------------------------------------------------------------------------

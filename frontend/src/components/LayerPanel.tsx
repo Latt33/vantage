@@ -9,7 +9,6 @@ interface LayerPanelProps {
   infraEnabled: Set<string>;
   infraStatusById: Record<string, { loadState?: LayerConfig["loadState"]; hasData?: boolean }>;
   weatherAverages: WeatherAverages;
-  roadLegendVisible: boolean;
   onChange: (id: LayerId, patch: Partial<LayerConfig>) => void;
 }
 
@@ -20,7 +19,6 @@ export default function LayerPanel({
   infraEnabled,
   infraStatusById,
   weatherAverages,
-  roadLegendVisible,
   onChange,
 }: LayerPanelProps) {
   const [addSourceOpen, setAddSourceOpen] = useState(false);
@@ -77,18 +75,6 @@ export default function LayerPanel({
             hasData={infraStatusById[node.id]?.hasData}
           />
         ))}
-        {roadLegendVisible && (
-          <div style={{ padding: "8px 12px", borderTop: "1px dashed var(--color-border-subtle)" }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-secondary)", marginBottom: 6 }}>Road size</div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <LegendSwatch color="#ffd47a" label="small" />
-              <LegendSwatch color="#f1c40f" label="local" />
-              <LegendSwatch color="#d35400" label="primary" />
-              <LegendSwatch color="#c0392b" label="major" />
-              <LegendSwatch color="#7a1919" label="highway" />
-            </div>
-          </div>
-        )}
       </div>
 
       <AddDataSourceButton onClick={() => setAddSourceOpen(true)} />
@@ -750,11 +736,3 @@ function WeatherSummary({ averages }: { averages: WeatherAverages }) {
   );
 }
 
-function LegendSwatch({ color, label }: { color: string; label: string }) {
-  return (
-    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-      <div style={{ width: 18, height: 10, background: color, border: "1px solid rgba(0,0,0,0.15)" }} />
-      <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{label}</div>
-    </div>
-  );
-}
