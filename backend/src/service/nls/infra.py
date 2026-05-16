@@ -1,6 +1,6 @@
 """Infrastructure (Roads) from the National Land Survey of Finland (NLS).
 
-Fetches the 'tieverkko' collection from the NLS OGC Features API.
+Fetches the 'tieviiva' collection from the NLS OGC Features API.
 
 Output files:
     {aoi_id}/infrastructure/roads.geojson
@@ -28,7 +28,7 @@ _LIMIT = 2000
 
 async def fetch_infra(aoi_id: str, bbox: BBox) -> dict:
     """Fetch MML roads and write to disk. Returns a summary dict."""
-    url = f"{_NLS_BASE}/collections/tieverkko/items"
+    url = f"{_NLS_BASE}/collections/tieviiva/items"
     params = {"bbox": str(bbox), "limit": _LIMIT, "f": "json"}
     
     features = []
@@ -38,11 +38,11 @@ async def fetch_infra(aoi_id: str, bbox: BBox) -> dict:
         resp.raise_for_status()
         features = resp.json().get("features", [])
     except Exception as exc:
-        logger.warning("NLS tieverkko error: %s", exc)
+        logger.warning("NLS tieviiva error: %s", exc)
 
     write_json(
         category_file(aoi_id, "infrastructure", "roads.geojson"),
-        feature_collection(features, source="NLS Finland — Tieverkko")
+        feature_collection(features, source="NLS Finland — Tieviiva")
     )
 
     counts = {"roads.geojson": len(features)}
@@ -50,8 +50,8 @@ async def fetch_infra(aoi_id: str, bbox: BBox) -> dict:
 
     write_category_meta(
         aoi_id, "infrastructure",
-        source="NLS Finland — Tieverkko",
+        source="NLS Finland — Tieviiva",
         confidence="high" if features else "low",
         feature_counts=counts,
     )
-    return {"source": "NLS Finland — Tieverkko", "feature_counts": counts}
+    return {"source": "NLS Finland — Tieviiva", "feature_counts": counts}

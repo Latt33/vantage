@@ -4,8 +4,8 @@ Fetches water bodies (lakes, ponds) and watercourses (rivers, streams)
 from the NLS OGC Features API and writes them as separate GeoJSON files.
 
 Output files:
-    {aoi_id}/water/bodies.geojson    — NLS 'vedet' collection
-    {aoi_id}/water/courses.geojson   — NLS 'virtavedet' collection
+    {aoi_id}/water/bodies.geojson    — NLS 'maatuvavesialue' collection
+    {aoi_id}/water/courses.geojson   — NLS 'virtavesialue' collection
     {aoi_id}/water/meta.json
 
 Source:  https://www.maanmittauslaitos.fi/en
@@ -35,8 +35,8 @@ _LIMIT = 500
 
 # (collection_id, output_filename)
 _COLLECTIONS = [
-    ("vedet",       "bodies.geojson"),
-    ("virtavedet",  "courses.geojson"),
+    ("maatuvavesialue", "bodies.geojson"),
+    ("virtavesialue",   "courses.geojson"),
 ]
 
 
