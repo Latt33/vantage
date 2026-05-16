@@ -8,6 +8,7 @@ interface ToolPanelProps {
   onDerivedToggle: (id: string) => void;
   onManageForces: () => void;
   onExport: () => void;
+  onMissionWindow: () => void;
 }
 
 export default function ToolPanel({
@@ -16,6 +17,7 @@ export default function ToolPanel({
   onDerivedToggle,
   onManageForces,
   onExport,
+  onMissionWindow,
 }: ToolPanelProps) {
   return (
     <div
@@ -50,6 +52,33 @@ export default function ToolPanel({
             ⤺ Manage Forces
           </button>
         </div>
+      </div>
+
+      <div
+        style={{
+          flexShrink: 0,
+          borderTop: "1px solid var(--color-border-default)",
+          padding: "10px 12px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+          background: "var(--color-bg-panel)",
+        }}
+      >
+        <div
+          style={{
+            fontFamily: "var(--font-heading)",
+            fontSize: 9,
+            fontWeight: 600,
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            color: "var(--color-text-dim)",
+            marginBottom: 4,
+          }}
+        >
+          Mission Window
+        </div>
+        <ExportButton icon="◷" label="Analyse Conditions" onClick={onMissionWindow} />
       </div>
 
       <div

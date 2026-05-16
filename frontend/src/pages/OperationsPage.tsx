@@ -7,8 +7,12 @@ import { bboxToArea, setArea } from "../area";
 import { API_BASE_URL, MAPTILER_KEY } from "../config";
 import { CAPABILITIES, Capability } from "../data/capabilities";
 import LayerPanel from "../components/LayerPanel";
-import TimeSlider from "../components/TimeSlider";
+import TimeSlider, { MissionWindowBand } from "../components/TimeSlider";
 import ToolPanel from "../components/ToolPanel";
+import MissionWindowModal, {
+  DEFAULT_CONDITIONS,
+  MissionConditionsUi,
+} from "../components/MissionWindowModal";
 import ExportIpbReportModal, { ExportLegendState } from "../export/ExportIpbReportModal";
 import { SOURCES, loadSource } from "../sources";
 import { analysesForCapabilities } from "../analyses";
@@ -157,6 +161,9 @@ export default function OperationsPage() {
   const [derivedSelected, setDerivedSelected] = useState<Set<string>>(new Set());
   const [exportOpen, setExportOpen] = useState(false);
   const [exportShot, setExportShot] = useState<string | null>(null);
+  const [missionWindowOpen, setMissionWindowOpen] = useState(false);
+  const [missionConditions, setMissionConditions] = useState<MissionConditionsUi>(DEFAULT_CONDITIONS);
+  const [missionWindows, setMissionWindows] = useState<MissionWindowBand[]>([]);
 
   const [jobInfo, setJobInfo] = useState<JobInfo | null>(null);
   const [stages, setStages] = useState<Record<string, string>>({});
@@ -251,6 +258,11 @@ export default function OperationsPage() {
 
     setExportShot(screenshot);
     setExportOpen(true);
+  }
+
+  function onApplyMissionWindow(cond: MissionConditionsUi) {
+    setMissionConditions(cond);
+    setMissionWindows(buildPlaceholderWindows(cond));
   }
 
   function onLayerChange(id: LayerId, patch: Partial<LayerConfig>) {
@@ -731,6 +743,7 @@ export default function OperationsPage() {
           onDerivedToggle={toggleDerived}
           onManageForces={() => navigate("/capabilities")}
           onExport={onExport}
+          onMissionWindow={() => setMissionWindowOpen(true)}
         />
 
         <div style={{ flex: 1, position: "relative" }}>
@@ -745,7 +758,14 @@ export default function OperationsPage() {
         />
       </div>
 
-      <TimeSlider />
+      <TimeSlider
+        forecastHorizonHours={missionConditions.lookaheadHours}
+        windows={missionWindows}
+        aoiCentroid={{
+          lat: (aoi.minLat + aoi.maxLat) / 2,
+          lon: (aoi.minLon + aoi.maxLon) / 2,
+        }}
+      />
 
       <ExportIpbReportModal
         open={exportOpen}
@@ -753,8 +773,73 @@ export default function OperationsPage() {
         legends={exportLegends}
         onClose={() => setExportOpen(false)}
       />
+
+      <MissionWindowModal
+        open={missionWindowOpen}
+        initial={missionConditions}
+        onClose={() => setMissionWindowOpen(false)}
+        onApply={onApplyMissionWindow}
+      />
     </div>
   );
+}
+
+/**
+ * Placeholder window generator — UI-only.
+ *
+ * Builds a deterministic set of "good" / "uncertain" bands across the
+ * configured horizon so the timeline shows something believable when
+ * the operator presses Apply. Replace with the real
+ * /api/mission-window/analyse response once it's wired up.
+ */
+function buildPlaceholderWindows(cond: MissionConditionsUi): MissionWindowBand[] {
+  const horizon = Math.max(1, cond.lookaheadHours);
+
+  // Score each ACTIVE atmospheric threshold as a 0..1 "permissiveness".
+  // Looser thresholds → longer / more confident windows.
+  // Rain on (no-rain required) is treated as a strict constraint (×0.6).
+  // Time-of-day on shrinks the available envelope (×0.65).
+  const parts: number[] = [];
+  if (cond.windEnabled)       parts.push(clamp01(cond.maxWindSpeedMs / 25));
+  if (cond.gustEnabled)       parts.push(clamp01(cond.maxWindGustMs / 40));
+  if (cond.cloudEnabled)      parts.push(clamp01(cond.maxCloudcoverPct / 100));
+  if (cond.visibilityEnabled) parts.push(clamp01(cond.minVisibilityM / 20000));
+  if (cond.rainEnabled)       parts.push(0.6);
+  if (cond.timeOfDayEnabled)  parts.push(0.65);
+
+  const looseness = parts.length === 0 ? 1 : parts.reduce((a, b) => a * b, 1);
+
+  const seeds = [
+    { center: horizon * 0.18 },
+    { center: horizon * 0.40 },
+    { center: horizon * 0.65 },
+    { center: horizon * 0.88 },
+  ];
+
+  const baseWidth = 6 + 14 * looseness; // 6h … 20h
+  const bands: MissionWindowBand[] = [];
+
+  for (let i = 0; i < seeds.length; i++) {
+    const c = seeds[i].center;
+    const half = baseWidth / 2;
+    const start = Math.round(Math.max(0, c - half));
+    const end = Math.round(Math.min(horizon, c + half));
+    if (end <= start) continue;
+
+    // Confidence drops with forecast horizon — later windows tend to be uncertain.
+    const horizonFrac = c / horizon;
+    const goodChance = (1 - horizonFrac) * (0.4 + 0.6 * looseness);
+    const kind: MissionWindowBand["kind"] = goodChance >= cond.minScore ? "good" : "uncertain";
+
+    bands.push({ startHour: start, endHour: end, kind });
+  }
+
+  return bands;
+}
+
+function clamp01(v: number): number {
+  if (Number.isNaN(v)) return 0;
+  return Math.max(0, Math.min(1, v));
 }
 
 interface TopBarProps {
