@@ -1,0 +1,191 @@
+:root {
+  /* Backgrounds — true black to very dark grey */
+  --color-bg-base:        #0a0a0a;
+  --color-bg-panel:       #111111;
+  --color-bg-raised:      #181818;
+  --color-bg-hover:       #202020;
+  --color-bg-active:      #252525;
+
+  /* Borders */
+  --color-border-subtle:  #2a2a2a;
+  --color-border-default: #3a3a3a;
+  --color-border-strong:  #555555;
+
+  /* Text */
+  --color-text-primary:   #e8e4d9;
+  --color-text-secondary: #8a8880;
+  --color-text-dim:       #555550;
+
+  /* Accents */
+  --color-accent-orange:  #e8622a;
+  --color-accent-amber:   #c87d2a;
+  --color-accent-yellow:  #d4a017;
+  --color-accent-red:     #c0392b;
+  --color-accent-teal:    #2a9d8a;
+  --color-accent-blue:    #2a6db5;
+
+  /* Status */
+  --color-status-ok:      #2a9d5c;
+  --color-status-warn:    #d4a017;
+  --color-status-crit:    #c0392b;
+
+  /* Map overlay opacities */
+  --overlay-opacity-high:   0.75;
+  --overlay-opacity-medium: 0.55;
+  --overlay-opacity-low:    0.35;
+
+  /* Fonts */
+  --font-ui:      'Barlow', sans-serif;
+  --font-data:    'Share Tech Mono', monospace;
+  --font-heading: 'Barlow Condensed', sans-serif;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  border-radius: 0 !important;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+/* Buttons */
+.btn {
+  background: transparent;
+  border: 1px solid var(--color-border-default);
+  color: var(--color-text-primary);
+  font-family: var(--font-heading);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s;
+}
+
+.btn:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+
+.btn--active,
+.btn:active {
+  border-color: var(--color-accent-orange);
+  color: var(--color-accent-orange);
+}
+
+.draw-toggle {
+  background: var(--color-bg-panel);
+}
+
+/* Toggle (square checkbox) */
+.toggle {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--color-border-strong);
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.toggle:checked {
+  background: var(--color-accent-orange);
+  border-color: var(--color-accent-orange);
+}
+
+/* Opacity slider */
+.opacity-slider {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 2px;
+  background: var(--color-border-default);
+  outline: none;
+}
+
+.opacity-slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 8px;
+  height: 12px;
+  background: var(--color-accent-orange);
+  cursor: pointer;
+  border: none;
+}
+
+.opacity-slider::-moz-range-thumb {
+  width: 8px;
+  height: 12px;
+  background: var(--color-accent-orange);
+  cursor: pointer;
+  border: none;
+  border-radius: 0;
+}
+
+/* Status badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--font-heading);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 2px var(--space-2);
+  border: 1px solid currentColor;
+}
+
+.badge--ok   { color: var(--color-status-ok); }
+.badge--warn { color: var(--color-status-warn); }
+.badge--crit { color: var(--color-status-crit); }
+
+/* Data readout */
+.data-value {
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+
+.data-label {
+  font-family: var(--font-heading);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+/* MapLibre overrides for dark theme */
+.maplibregl-ctrl-attrib {
+  background: rgba(17, 17, 17, 0.85) !important;
+  color: var(--color-text-secondary) !important;
+  font-family: var(--font-data) !important;
+  font-size: 10px !important;
+}
+
+.maplibregl-ctrl-attrib a {
+  color: var(--color-text-secondary) !important;
+}
+
+.maplibregl-canvas:focus {
+  outline: none;
+}
