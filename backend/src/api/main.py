@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routers import aoi
+from src.api.routers import cellular
 from src.api.routers import dem
 from src.api.routers import infrastructure
 from src.api.routers import jobs
@@ -41,6 +42,7 @@ app.add_middleware(
 
 app.include_router(system.router)
 app.include_router(aoi.router)
+app.include_router(cellular.router)
 app.include_router(jobs.router)
 app.include_router(layers.router)
 app.include_router(weather.router)

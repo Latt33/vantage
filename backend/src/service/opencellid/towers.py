@@ -19,20 +19,32 @@ logger = logging.getLogger(__name__)
 
 OPENCELLID_API_KEY = os.getenv("OPENCELLID_API_KEY", "")
 
+def _write_empty(aoi_id: str) -> dict:
+    out_path = category_file(aoi_id, "cellular", "towers.geojson")
+    write_json(out_path, feature_collection([], source="OpenCelliD"))
+    write_category_meta(
+        aoi_id, "cellular",
+        source="OpenCelliD",
+        confidence="low",
+        feature_counts={"towers.geojson": 0},
+    )
+    return {"source": "OpenCelliD", "feature_counts": {"towers.geojson": 0}}
+
+
 async def fetch_towers(aoi_id: str, bbox: BBox) -> dict:
     """Fetch cell towers from OpenCelliD and write to disk."""
     if not OPENCELLID_API_KEY:
         logger.warning("No OPENCELLID_API_KEY set, skipping OpenCelliD fetch.")
-        return {"source": "OpenCelliD", "feature_counts": {"towers.geojson": 0}}
+        return _write_empty(aoi_id)
 
     url = "https://opencellid.org/cell/getInArea"
-    
+
     params = {
         "key": OPENCELLID_API_KEY,
         "BBOX": f"{bbox.min_lat},{bbox.min_lon},{bbox.max_lat},{bbox.max_lon}",
-        "mcc": "244", # Finland
+        "mcc": "244",  # Finland
         "format": "json",
-        "limit": "1000"
+        "limit": "1000",
     }
 
     try:
@@ -41,7 +53,7 @@ async def fetch_towers(aoi_id: str, bbox: BBox) -> dict:
         data = resp.json()
     except Exception as exc:
         logger.warning("OpenCelliD error: %s", exc)
-        return {"source": "OpenCelliD", "feature_counts": {"towers.geojson": 0}}
+        return _write_empty(aoi_id)
 
     towers = []
     
@@ -75,9 +87,9 @@ async def fetch_towers(aoi_id: str, bbox: BBox) -> dict:
 
     write_json(
         category_file(aoi_id, "cellular", "towers.geojson"),
-        feature_collection(towers, source="OpenCelliD")
+        feature_collection(towers, source="OpenCelliD"),
     )
-    
+
     counts = {"towers.geojson": len(towers)}
     logger.info("OpenCelliD: %d towers → cellular/", len(towers))
 

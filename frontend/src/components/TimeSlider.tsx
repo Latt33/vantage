@@ -11,9 +11,19 @@ function fmt(offsetHours: number): string {
 
 const TICKS = [-72, -48, -24, 0, 24, 48, 72];
 
-export default function TimeSlider() {
+interface TimeSliderProps {
+  onTimeChange?: (offsetHours: number) => void;
+}
+
+export default function TimeSlider({ onTimeChange }: TimeSliderProps) {
   const [offset, setOffset] = useState(0);
   const display = useMemo(() => fmt(offset), [offset]);
+
+  function apply(value: number) {
+    const clamped = Math.max(MIN, Math.min(MAX, value));
+    setOffset(clamped);
+    onTimeChange?.(clamped);
+  }
 
   return (
     <div
@@ -28,11 +38,19 @@ export default function TimeSlider() {
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <button className="btn" type="button" onClick={() => setOffset(o => Math.max(MIN, o - 24))}>
+        <button className="btn" type="button" onClick={() => apply(offset - 24)}>
           ◀◀
         </button>
-        <button className="btn" type="button">
+        <button
+          className="btn"
+          type="button"
+          onClick={() => apply(0)}
+          title="Jump to now"
+        >
           ▶
+        </button>
+        <button className="btn" type="button" onClick={() => apply(offset + 24)}>
+          ▶▶
         </button>
         <div
           style={{
@@ -82,7 +100,7 @@ export default function TimeSlider() {
           max={MAX}
           step={1}
           value={offset}
-          onChange={e => setOffset(parseInt(e.target.value, 10))}
+          onChange={e => apply(parseInt(e.target.value, 10))}
           style={{ position: "absolute", inset: "0 0 12px 0", width: "100%" }}
         />
         <div

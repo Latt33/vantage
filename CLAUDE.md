@@ -123,6 +123,154 @@ to avoid confusion with HTTP vs HTTPS protocol. All requests made through it use
 ### `_shared/geojson.py`
 Helpers for building GeoJSON Feature and FeatureCollection objects consistently across services.
 
+### `_shared/formats.py`
+Canonical storage format utilities — write, read, and convert between the three storage formats.
+**This is the authoritative reference for all data I/O.** Services must use these functions;
+never roll their own file I/O for data output.
+
+---
+
+## Data Storage Standards
+
+Every service must store its output in exactly one of three canonical formats.
+Choose by answering:
+
+```
+Is it a continuous spatial field (grid of elevation, wind speed, temperature…)?
+  → Parquet grid (.parquet)
+
+Did it come from OpenStreetMap / Overpass (nodes/ways with real OSM IDs and tags)?
+  → OSM XML (.osm)
+
+Is it discrete points, polygons, or lines from any other source?
+  → GeoJSON FeatureCollection (.geojson)
+```
+
+**The API layer always converts Parquet and OSM to GeoJSON before sending to the frontend.**
+The frontend never reads `.parquet` or `.osm` files directly.
+
+---
+
+### Format 1: Parquet Grid (`.parquet`)
+
+Used for: `dem/elevation.parquet`, `weather/forecast.parquet`.
+
+**Mandatory columns — always first, always this type:**
+
+| Column | Type | Description |
+|---|---|---|
+| `lon` | `float64` | Longitude in WGS84 / EPSG:4326, degrees east |
+| `lat` | `float64` | Latitude in WGS84 / EPSG:4326, degrees north |
+
+Additional columns follow, named per the schema below. No other CRS is permitted.
+Use `write_parquet_grid(path, df)` from `_shared/formats.py` — it enforces column order.
+
+**`dem/elevation.parquet` schema:**
+
+| Column | Type | Unit |
+|---|---|---|
+| `lon` | `float64` | degrees east |
+| `lat` | `float64` | degrees north |
+| `elevation_m` | `float32` | metres above sea level |
+
+**`weather/forecast.parquet` schema** (one row per grid-point × time-step):
+
+| Column | Type | Unit |
+|---|---|---|
+| `lon` | `float64` | degrees east |
+| `lat` | `float64` | degrees north |
+| `valid_time` | `str` | ISO 8601 UTC — the forecast step |
+| `wind_speed_ms` | `float32` | m/s at 10 m |
+| `wind_dir_deg` | `float32` | degrees from north at 10 m |
+| `wind_gust_ms` | `float32` | m/s at 10 m |
+| `precipitation_mm` | `float32` | mm/h |
+| `rain_mm` | `float32` | mm/h |
+| `snowfall_cm` | `float32` | cm/h |
+| `snow_depth_m` | `float32` | m |
+| `visibility_m` | `float32` | metres |
+| `cloudcover_pct` | `float32` | % |
+| `temperature_c` | `float32` | °C at 2 m |
+| `humidity_pct` | `float32` | % at 2 m |
+| `pressure_hpa` | `float32` | hPa |
+| *(and others — see `weather.py` for the full list)* | | |
+
+---
+
+### Format 2: GeoJSON FeatureCollection (`.geojson`)
+
+Used for: all point, polygon, and line features from non-OSM sources.
+Also used for derived/analysis outputs (MCOO zones).
+
+Rules:
+- Root object must be `{"type": "FeatureCollection", "features": [...]}`.
+- Geometry in EPSG:4326 (the default per RFC 7946 — do not embed a CRS object).
+- Every feature must have `"source"` in `properties`.
+- Point features (towers, cameras, satellite passes): `geometry.type = "Point"`.
+- Area/line features (water, land, MCOO): Polygon / MultiPolygon / LineString.
+
+**`satellites/passes.geojson`** — each pass is a Point at the AoI observer location:
+
+```json
+{
+  "type": "Feature",
+  "geometry": {"type": "Point", "coordinates": [lon, lat]},
+  "properties": {
+    "source": "N2YO",
+    "satellite_name": "Sentinel-1A",
+    "norad_id": "39634",
+    "start_time": "2024-01-01T10:00:00+00:00",
+    "max_elevation_deg": 45.2,
+    "max_time": "2024-01-01T10:04:00+00:00",
+    "end_time": "2024-01-01T10:08:00+00:00",
+    "start_az_compass": "NE",
+    "end_az_compass": "SW"
+  }
+}
+```
+
+---
+
+### Format 3: OSM XML (`.osm`)
+
+Used for: `infrastructure/infra.osm` (all OSM-sourced infrastructure).
+
+Standard OSM 0.6 format. **One `.osm` file per service category.**
+The raw Overpass `elements` list is written verbatim via `write_osm(path, elements)`.
+Original OSM node/way IDs and all tags are preserved.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="AI2PB/overpass">
+  <node id="12345" lat="60.123" lon="24.456">
+    <tag k="amenity" v="fuel"/>
+  </node>
+  <way id="67890">
+    <nd ref="12345"/>
+    <nd ref="12346"/>
+    <tag k="highway" v="primary"/>
+  </way>
+</osm>
+```
+
+Bare geometry nodes (no tags) are also written so ways can have their
+coordinates reconstructed during `read_osm_as_geojson`.
+
+**API filtering:** Each typed endpoint (roads, bridges, fuel, …) calls
+`serve_osm_as_geojson` with a `tag_filter` dict. See `_responses.py` and the
+infrastructure router for examples.
+
+---
+
+### Adding a new service — format checklist
+
+1. Determine format using the decision tree above.
+2. Use the appropriate `_shared/formats.py` write function (`write_parquet_grid`,
+   `write_osm`, or `write_json` for GeoJSON).
+3. Add a typed API endpoint in `api/routers/` using `serve_parquet_as_geojson`,
+   `serve_osm_as_geojson`, or `serve_layer_file` as appropriate.
+4. Document the output file name and schema in the service module's docstring.
+5. Update this file if you add a new file name or schema column.
+
 ---
 
 ## Git Workflow

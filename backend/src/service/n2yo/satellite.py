@@ -1,99 +1,119 @@
-"""Satellite Surveillance Predictor (N2YO API)
+"""Satellite Surveillance Predictor (N2YO API).
 
 Fetches upcoming satellite passes over the Area of Interest.
-We use the 'radiopasses' endpoint because it calculates anytime the satellite
-is above the horizon (line of sight), whereas 'visualpasses' only calculates
-when the satellite is illuminated by the sun in a dark sky (for human stargazing).
+The 'radiopasses' endpoint is used because it calculates line-of-sight passes
+(satellite above horizon), not just visually bright passes.
+
+Each pass is stored as a GeoJSON Point at the observer location (AoI centroid)
+with temporal properties, making passes directly renderable on a map.
 
 Output files:
-    {aoi_id}/satellites/passes.json
+    {aoi_id}/satellites/passes.geojson   — GeoJSON FeatureCollection (Points)
     {aoi_id}/satellites/meta.json
+
+GeoJSON feature properties:
+    source            "N2YO"
+    satellite_name    human-readable satellite name
+    norad_id          NORAD catalogue number (str)
+    start_time        ISO 8601 UTC — pass start (satellite rises above min_elevation)
+    max_elevation_deg peak elevation above horizon (degrees)
+    max_time          ISO 8601 UTC — time of peak elevation
+    end_time          ISO 8601 UTC — pass end (satellite drops below min_elevation)
+    start_az_compass  compass direction at pass start (e.g. "NE")
+    end_az_compass    compass direction at pass end
 """
 
 import logging
 import os
-import httpx
+from datetime import datetime, timezone
 
 from src.service._shared.bbox import BBox
 from src.service._shared.client import client
-from src.service._shared.storage import (
-    category_file,
-    write_category_meta,
-    write_json,
-)
+from src.service._shared.geojson import feature, feature_collection, point
+from src.service._shared.storage import category_file, write_category_meta, write_json
 
 logger = logging.getLogger(__name__)
 
 N2YO_API_KEY = os.getenv("N2YO_API_KEY", "")
 _N2YO_BASE = "https://api.n2yo.com/rest/v1/satellite/radiopasses"
 
-# NORAD IDs for interesting reconnaissance/observation satellites
 _TARGET_SATS = {
     "25544": "ISS (Zarya) - Testing",
     "39634": "Sentinel-1A (ESA Radar)",
     "40019": "Resurs-P 2 (Russian Optical)",
-    "49044": "Landsat 9 (US Optical)"
+    "49044": "Landsat 9 (US Optical)",
 }
 
-async def fetch_satellites(aoi_id: str, bbox: BBox) -> dict:
-    """Fetch satellite pass schedules and write to disk."""
-    if not N2YO_API_KEY:
-        logger.warning("N2YO_API_KEY not set. Skipping satellite prediction.")
-        return {"source": "N2YO Satellite API", "error": "Missing API Key"}
 
-    # Use the centroid of the BBox as the observer location
+def _utc_to_iso(unix_ts: int | None) -> str | None:
+    """Convert a UTC Unix timestamp to an ISO 8601 string, or None."""
+    if unix_ts is None:
+        return None
+    return datetime.fromtimestamp(unix_ts, tz=timezone.utc).isoformat()
+
+
+async def fetch_satellites(aoi_id: str, bbox: BBox) -> dict:
+    """Fetch satellite pass schedules and write to disk as GeoJSON."""
+    if not N2YO_API_KEY:
+        logger.warning("N2YO_API_KEY not set — skipping satellite prediction.")
+        fc = feature_collection([], source="N2YO")
+        write_json(category_file(aoi_id, "satellites", "passes.geojson"), fc)
+        write_category_meta(
+            aoi_id, "satellites",
+            source="N2YO Satellite API",
+            confidence="low",
+            feature_counts={"passes.geojson": 0},
+        )
+        return {"source": "N2YO Satellite API", "feature_counts": {"passes.geojson": 0}}
+
     center_lat = (bbox.min_lat + bbox.max_lat) / 2.0
     center_lon = (bbox.min_lon + bbox.max_lon) / 2.0
-    observer_alt = 0  # meters
-    days = 3          # forecast window
-    min_elevation = 20 # degrees above horizon to be considered a threat
+    observer_alt = 0    # metres above ground
+    days = 3            # forecast window
+    min_elevation = 20  # degrees above horizon threshold
 
-    all_passes = []
+    features = []
 
-    for norad_id, name in _TARGET_SATS.items():
-        url = f"{_N2YO_BASE}/{norad_id}/{center_lat}/{center_lon}/{observer_alt}/{days}/{min_elevation}/&apiKey={N2YO_API_KEY}"
-        
+    for norad_id, sat_name in _TARGET_SATS.items():
+        url = (
+            f"{_N2YO_BASE}/{norad_id}/{center_lat}/{center_lon}"
+            f"/{observer_alt}/{days}/{min_elevation}/&apiKey={N2YO_API_KEY}"
+        )
         try:
             resp = await client.get(url)
             resp.raise_for_status()
             data = resp.json()
-            
-            passes = data.get("passes", [])
-            for p in passes:
-                all_passes.append({
-                    "satellite_name": name,
+
+            for p in data.get("passes", []):
+                props = {
+                    "source": "N2YO",
+                    "satellite_name": sat_name,
                     "norad_id": norad_id,
-                    "start_time": p.get("startUTC"),
-                    "start_az": p.get("startAz"),
+                    "start_time": _utc_to_iso(p.get("startUTC")),
+                    "max_elevation_deg": p.get("maxEl"),
+                    "max_time": _utc_to_iso(p.get("maxUTC")),
+                    "end_time": _utc_to_iso(p.get("endUTC")),
                     "start_az_compass": p.get("startAzCompass"),
-                    "max_time": p.get("maxUTC"),
-                    "max_elevation": p.get("maxEl"),
-                    "max_az": p.get("maxAz"),
-                    "max_az_compass": p.get("maxAzCompass"),
-                    "end_time": p.get("endUTC"),
-                    "end_az": p.get("endAz"),
                     "end_az_compass": p.get("endAzCompass"),
-                })
+                }
+                features.append(feature(point(center_lon, center_lat), props))
+
         except Exception as exc:
-            logger.warning("Failed to fetch passes for %s (%s): %s", name, norad_id, exc)
+            logger.warning("Failed to fetch passes for %s (%s): %s", sat_name, norad_id, exc)
 
-    # Sort passes chronologically by start time
-    all_passes.sort(key=lambda x: x.get("start_time", 0))
+    # Sort chronologically by start_time (None values sort last)
+    features.sort(key=lambda f: f["properties"].get("start_time") or "")
 
-    schedule_data = {
-        "observer": {"lat": center_lat, "lon": center_lon},
-        "passes": all_passes
-    }
+    fc = feature_collection(features, source="N2YO")
+    write_json(category_file(aoi_id, "satellites", "passes.geojson"), fc)
 
-    write_json(category_file(aoi_id, "satellites", "passes.json"), schedule_data)
-    
-    logger.info("N2YO Satellites: Found %d upcoming passes", len(all_passes))
+    n_passes = len(features)
+    logger.info("N2YO Satellites: %d upcoming passes → passes.geojson", n_passes)
 
-    counts = {"total_passes": len(all_passes)}
     write_category_meta(
         aoi_id, "satellites",
         source="N2YO Satellite API",
         confidence="high",
-        feature_counts=counts,
+        feature_counts={"passes.geojson": n_passes},
     )
-    return {"source": "N2YO Satellite API", "feature_counts": counts}
+    return {"source": "N2YO Satellite API", "feature_counts": {"passes.geojson": n_passes}}

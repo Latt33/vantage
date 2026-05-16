@@ -34,6 +34,8 @@ CATEGORY_TTL: dict[str, timedelta] = {
     "land":           timedelta(days=7),
     "infrastructure": timedelta(hours=24),
     "cellular":       timedelta(days=7),
+    "dem":            timedelta(days=30),
+    "satellites":     timedelta(hours=6),
     "mcoo":           timedelta(hours=24),
     "traffic_cameras": timedelta(hours=1),
 }
@@ -121,10 +123,23 @@ def get_category_meta(aoi_id: str, category: str) -> dict | None:
 
 
 def is_stale(aoi_id: str, category: str) -> bool:
-    """Return True if the category data is missing or older than its TTL."""
+    """Return True if the category data is missing or older than its TTL.
+
+    Also returns True when meta.json exists but no data files are present —
+    this guards against a previous failed fetch that wrote only meta.json.
+    """
     meta = get_category_meta(aoi_id, category)
     if meta is None:
         return True
+
+    # Treat as stale if the category dir has no actual data files alongside meta.json
+    cat_dir = category_dir(aoi_id, category)
+    if not cat_dir.exists():
+        return True
+    data_files = [f for f in cat_dir.iterdir() if f.name != "meta.json"]
+    if not data_files:
+        return True
+
     try:
         fetched_at = datetime.fromisoformat(meta["fetched_at"])
         ttl = CATEGORY_TTL.get(category, timedelta(hours=24))
