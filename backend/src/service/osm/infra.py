@@ -21,6 +21,8 @@ Output files:
 
 import logging
 
+import httpx
+
 from src.service._shared.bbox import BBox
 from src.service._shared.client import client
 from src.service._shared.formats import write_osm
@@ -31,18 +33,14 @@ logger = logging.getLogger(__name__)
 _OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 
 
+_OVERPASS_TIMEOUT = httpx.Timeout(connect=30.0, read=90.0, write=10.0, pool=5.0)
+
+
 def _build_query(bbox: BBox) -> str:
     b = f"{bbox.min_lat},{bbox.min_lon},{bbox.max_lat},{bbox.max_lon}"
     return f"""[out:json][timeout:60][bbox:{b}];
 (
   way["highway"];
-  way["bridge"="yes"];
-  node["amenity"="fuel"];
-  way["amenity"="fuel"];
-  node["power"];
-  way["power"];
-  node["amenity"~"^(hospital|clinic|doctors)$"];
-  way["amenity"~"^(hospital|clinic|doctors)$"];
 );
 out body;
 >;
@@ -58,6 +56,7 @@ async def fetch_infra(aoi_id: str, bbox: BBox) -> dict:
             _OVERPASS_URL,
             data={"data": query},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=_OVERPASS_TIMEOUT,
         )
         resp.raise_for_status()
         elements: list[dict] = resp.json().get("elements", [])
@@ -82,7 +81,7 @@ async def fetch_infra(aoi_id: str, bbox: BBox) -> dict:
         }
 
     except Exception as exc:
-        logger.warning("Overpass infra fetch error: %s", exc)
+        logger.warning("Overpass infra fetch error: %s: %s", type(exc).__name__, exc)
         write_category_meta(
             aoi_id, "infrastructure",
             source="OpenStreetMap / Overpass API",

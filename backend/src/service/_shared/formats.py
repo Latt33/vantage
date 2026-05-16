@@ -48,13 +48,16 @@ def read_parquet_as_geojson(path: Path) -> dict:
     """
     df = pd.read_parquet(path)
 
+    import math
+
     features = []
     for _, row in df.iterrows():
         props: dict = {}
         for k, v in row.items():
             if k in ("lon", "lat"):
                 continue
-            props[k] = v.item() if hasattr(v, "item") else v
+            scalar = v.item() if hasattr(v, "item") else v
+            props[k] = None if (isinstance(scalar, float) and math.isnan(scalar)) else scalar
         features.append({
             "type": "Feature",
             "geometry": {"type": "Point", "coordinates": [row["lon"], row["lat"]]},

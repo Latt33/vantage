@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\attel\\\\Desktop\\\\hackathons\\\\defence\\\\backend\\\\src\\\\service\" -Recurse -Name)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "WebFetch(domain:avoin-karttakuva.maanmittauslaitos.fi)"
     ]
   }
 }

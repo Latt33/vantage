@@ -15,10 +15,6 @@ import { cache, sourceKey } from "../registry/cache";
 import { API_BASE_URL } from "../config";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 
-const PLACEHOLDER_LOAD = async (): Promise<unknown> => {
-  throw new Error("source not implemented");
-};
-
 const EMPTY_FC: FeatureCollection = { type: "FeatureCollection", features: [] };
 
 function getBackendAoiId(area: AreaContext): string {
@@ -134,30 +130,6 @@ async function loadInfraRoads(area: AreaContext, signal?: AbortSignal): Promise<
   return asFeatureCollection(raw);
 }
 
-async function loadInfraBridges(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
-  const aoiId = getBackendAoiId(area);
-  const raw = await fetchJson(`/api/aoi/${aoiId}/infrastructure/bridges`, signal);
-  return asFeatureCollection(raw);
-}
-
-async function loadInfraFuel(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
-  const aoiId = getBackendAoiId(area);
-  const raw = await fetchJson(`/api/aoi/${aoiId}/infrastructure/fuel`, signal);
-  return asFeatureCollection(raw);
-}
-
-async function loadInfraPower(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
-  const aoiId = getBackendAoiId(area);
-  const raw = await fetchJson(`/api/aoi/${aoiId}/infrastructure/power`, signal);
-  return asFeatureCollection(raw);
-}
-
-async function loadInfraHealthcare(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
-  const aoiId = getBackendAoiId(area);
-  const raw = await fetchJson(`/api/aoi/${aoiId}/infrastructure/healthcare`, signal);
-  return asFeatureCollection(raw);
-}
-
 // ── Surveillance ──────────────────────────────────────────────────────────────
 
 async function loadCellular(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
@@ -182,14 +154,8 @@ export const SOURCES: DataSource[] = [
   { id: "water",            label: "Water",           sublabel: "Lakes · Rivers",           category: "base",           hasData: false, load: loadWater },
   // Atmospheric
   { id: "weather",          label: "Weather",         sublabel: "ECMWF forecast grid",      category: "atmospheric",    hasData: false, load: loadWeather },
-  // Demographic
-  { id: "population",       label: "Population",      sublabel: "Density distribution",     category: "demographic",    hasData: false, load: PLACEHOLDER_LOAD },
   // Infrastructure
   { id: "infra_roads",      label: "Roads",           sublabel: "Highway network",          category: "infrastructure", hasData: false, load: loadInfraRoads },
-  { id: "infra_bridges",    label: "Bridges",         sublabel: "Crossings · Choke points", category: "infrastructure", hasData: false, load: loadInfraBridges },
-  { id: "infra_fuel",       label: "Fuel Stations",   sublabel: "Fuel & POL sites",         category: "infrastructure", hasData: false, load: loadInfraFuel },
-  { id: "infra_power",      label: "Power Grid",      sublabel: "Lines · Substations",      category: "infrastructure", hasData: false, load: loadInfraPower },
-  { id: "infra_healthcare", label: "Healthcare",      sublabel: "Hospitals · Clinics",      category: "infrastructure", hasData: false, load: loadInfraHealthcare },
   // Surveillance
   { id: "cellular",         label: "Cell Towers",     sublabel: "RF coverage · Relays",     category: "surveillance",   hasData: false, load: loadCellular },
   { id: "satellites",       label: "Satellites",      sublabel: "Recon window · Overhead",  category: "surveillance",   hasData: false, load: loadSatellites },
