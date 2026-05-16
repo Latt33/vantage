@@ -14,6 +14,7 @@ OGC API: https://avoin-karttakuva.maanmittauslaitos.fi/ogc/features/v2
 
 import logging
 
+import os
 import httpx
 
 from src.service._shared.bbox import BBox
@@ -28,7 +29,8 @@ from src.service._shared.storage import (
 
 logger = logging.getLogger(__name__)
 
-_NLS_BASE = "https://avoin-karttakuva.maanmittauslaitos.fi/ogc/features/v2"
+_NLS_BASE = "https://avoin-paikkatieto.maanmittauslaitos.fi/maastotiedot/features/v1"
+MML_API_KEY = os.getenv("MML_API_KEY", "")
 _LIMIT = 500
 
 # (collection_id, output_filename)
@@ -42,7 +44,8 @@ async def _fetch_collection(collection_id: str, bbox: BBox) -> list[dict]:
     url = f"{_NLS_BASE}/collections/{collection_id}/items"
     params = {"bbox": str(bbox), "limit": _LIMIT, "f": "json"}
     try:
-        resp = await client.get(url, params=params)
+        auth = (MML_API_KEY, "") if MML_API_KEY else None
+        resp = await client.get(url, params=params, auth=auth)
         resp.raise_for_status()
         return resp.json().get("features", [])
     except httpx.HTTPStatusError as exc:

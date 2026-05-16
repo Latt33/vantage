@@ -13,6 +13,7 @@ OGC API: https://avoin-karttakuva.maanmittauslaitos.fi/ogc/features/v2
 
 import logging
 
+import os
 import httpx
 
 from src.service._shared.bbox import BBox
@@ -26,7 +27,8 @@ from src.service._shared.storage import (
 
 logger = logging.getLogger(__name__)
 
-_NLS_BASE = "https://avoin-karttakuva.maanmittauslaitos.fi/ogc/features/v2"
+_NLS_BASE = "https://avoin-paikkatieto.maanmittauslaitos.fi/maastotiedot/features/v1"
+MML_API_KEY = os.getenv("MML_API_KEY", "")
 _LIMIT = 500
 
 
@@ -37,7 +39,8 @@ async def fetch_land(aoi_id: str, bbox: BBox) -> dict:
 
     features: list[dict] = []
     try:
-        resp = await client.get(url, params=params)
+        auth = (MML_API_KEY, "") if MML_API_KEY else None
+        resp = await client.get(url, params=params, auth=auth)
         resp.raise_for_status()
         features = resp.json().get("features", [])
     except httpx.HTTPStatusError as exc:
