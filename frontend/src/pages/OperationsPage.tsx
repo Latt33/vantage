@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import maplibregl from "maplibre-gl";
+import type { FeatureCollection } from "geojson";
 import { BoundingBox, LayerConfig, LayerId, LayerSection } from "../types";
 import { setArea, bboxToArea } from "../area";
-import { MAPTILER_KEY } from "../config";
+import { API_BASE_URL, MAPTILER_KEY } from "../config";
 import { CAPABILITIES, Capability } from "../data/capabilities";
 import CapabilityIcon from "../components/icons/CapabilityIcon";
 import LayerPanel from "../components/LayerPanel";
 import TimeSlider from "../components/TimeSlider";
+import cameraIconUrl from "../assets/camera-icon.svg";
+
+const CAMERA_SOURCE = "traffic-cameras-source";
+const CAMERA_LAYER = "traffic-cameras-layer";
+const EMPTY_FC: FeatureCollection = { type: "FeatureCollection", features: [] };
 
 const INITIAL_LAYERS: LayerConfig[] = [
   { id: "terrain",        label: "Topography",     sublabel: "Elevation · DEM",         accentColor: "#8a7a5a", visible: false, opacity: 0.7 },
@@ -15,11 +21,12 @@ const INITIAL_LAYERS: LayerConfig[] = [
   { id: "forest",         label: "Forest Cover",   sublabel: "Canopy density",          accentColor: "#2a7a2a", visible: false, opacity: 0.65 },
   { id: "weather",        label: "Weather",        sublabel: "Open-Meteo forecast",     accentColor: "#2a6db5", visible: false, opacity: 0.6 },
   { id: "infrastructure", label: "Infrastructure", sublabel: "Roads · bridges · towers", accentColor: "#d4a017", visible: false, opacity: 0.8 },
+  { id: "traffic_cameras", label: "Kelikamerat",    sublabel: "Road weather cameras",    accentColor: "#f1c94a", visible: false, opacity: 0.95 },
   { id: "population",     label: "Population",     sublabel: "Density distribution",    accentColor: "#e8622a", visible: false, opacity: 0.55 },
 ];
 
 const BASE_IDS: LayerId[] = ["terrain", "landcover", "forest"];
-const INTEL_IDS: LayerId[] = ["weather", "infrastructure", "population"];
+const INTEL_IDS: LayerId[] = ["weather", "infrastructure", "traffic_cameras", "population"];
 
 function loadAoi(): BoundingBox | null {
   try { return JSON.parse(sessionStorage.getItem("aoi") ?? "null"); }
@@ -49,6 +56,8 @@ export default function OperationsPage() {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [layers, setLayers] = useState<LayerConfig[]>(INITIAL_LAYERS);
+  const [jobInfo, setJobInfo] = useState<{ aoiId: string; jobId: string } | null>(null);
+  const [cameraData, setCameraData] = useState<FeatureCollection>(EMPTY_FC);
 
   useEffect(() => {
     if (!aoi) {
@@ -98,6 +107,36 @@ export default function OperationsPage() {
         source: "aoi-source",
         paint: { "line-color": "#e8622a", "line-width": 1.5, "line-opacity": 0.85 },
       });
+
+      map.addSource(CAMERA_SOURCE, { type: "geojson", data: EMPTY_FC });
+      map.loadImage(cameraIconUrl, (error, image) => {
+        if (error || !image || map.hasImage("traffic-camera-icon")) return;
+        map.addImage("traffic-camera-icon", image, { sdf: false });
+        map.addLayer({
+          id: CAMERA_LAYER,
+          type: "symbol",
+          source: CAMERA_SOURCE,
+          layout: {
+            "icon-image": "traffic-camera-icon",
+            "icon-size": 0.7,
+            "icon-allow-overlap": true,
+            "icon-ignore-placement": true,
+            "visibility": "none",
+          },
+        });
+
+        map.on("mouseenter", CAMERA_LAYER, () => {
+          map.getCanvas().style.cursor = "pointer";
+        });
+        map.on("mouseleave", CAMERA_LAYER, () => {
+          map.getCanvas().style.cursor = "";
+        });
+        map.on("click", CAMERA_LAYER, (event) => {
+          const feature = event.features?.[0];
+          const url = feature?.properties?.image_url as string | undefined;
+          if (url) window.open(url, "_blank", "noopener");
+        });
+      });
       setMapReady(true);
     });
 
@@ -111,6 +150,105 @@ export default function OperationsPage() {
   function onLayerChange(id: LayerId, patch: Partial<LayerConfig>) {
     setLayers(prev => prev.map(l => (l.id === id ? { ...l, ...patch } : l)));
   }
+
+  function setLayerHasData(id: LayerId, hasData: boolean) {
+    setLayers(prev => prev.map(l => (l.id === id ? { ...l, hasData } : l)));
+  }
+
+  useEffect(() => {
+    const cameraLayer = layers.find(layer => layer.id === "traffic_cameras");
+    if (!aoi || jobInfo || !mapReady || !cameraLayer?.visible) return;
+    const controller = new AbortController();
+
+    async function startJob() {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/aoi`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            min_lon: aoi.minLon,
+            min_lat: aoi.minLat,
+            max_lon: aoi.maxLon,
+            max_lat: aoi.maxLat,
+          }),
+          signal: controller.signal,
+        });
+        if (!res.ok) return;
+        const payload = await res.json();
+        if (!payload?.aoi_id || !payload?.job_id) return;
+        setJobInfo({ aoiId: payload.aoi_id, jobId: payload.job_id });
+      } catch {
+        // Ignore aborted or network errors; panel will show no data.
+      }
+    }
+
+    startJob();
+    return () => controller.abort();
+  }, [aoi, jobInfo, mapReady, layers]);
+
+  useEffect(() => {
+    if (!jobInfo) return;
+    let active = true;
+    let timer: number | undefined;
+
+    async function pollStatus() {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/job/${jobInfo.jobId}/status`);
+        if (!res.ok) return;
+        const payload = await res.json();
+        const stage = payload?.stages?.traffic_cameras;
+        if (stage === "done") {
+          await loadCameraLayer(jobInfo.aoiId);
+          if (timer) window.clearInterval(timer);
+        }
+      } catch {
+        // Leave polling active to retry.
+      }
+    }
+
+    async function loadCameraLayer(aoiId: string) {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/aoi/${aoiId}/layers/traffic_cameras/stations.geojson`);
+        if (!res.ok) return;
+        const fc = await res.json();
+        if (!active || fc?.type !== "FeatureCollection") return;
+        setCameraData(fc);
+        setLayerHasData("traffic_cameras", (fc.features ?? []).length > 0);
+      } catch {
+        // Ignore fetch errors; leave data empty.
+      }
+    }
+
+    pollStatus();
+    timer = window.setInterval(pollStatus, 2000);
+
+    return () => {
+      active = false;
+      if (timer) window.clearInterval(timer);
+    };
+  }, [jobInfo]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const source = map.getSource(CAMERA_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    if (!source) return;
+    source.setData(cameraData);
+  }, [cameraData, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const cameraLayer = layers.find(layer => layer.id === "traffic_cameras");
+    if (!cameraLayer) return;
+    if (map.getLayer(CAMERA_LAYER)) {
+      map.setLayoutProperty(
+        CAMERA_LAYER,
+        "visibility",
+        cameraLayer.visible ? "visible" : "none",
+      );
+    }
+  }, [layers, mapReady]);
 
   function newMission() {
     sessionStorage.clear();

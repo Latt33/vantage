@@ -15,7 +15,8 @@ export type LayerId =
   | "landcover"
   | "forest"
   | "infrastructure"
-  | "population";
+  | "population"
+  | "traffic_cameras";
 
 export interface LayerConfig {
   id: LayerId;
