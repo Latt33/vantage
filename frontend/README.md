@@ -1,6 +1,6 @@
 # IPB Map — Frontend
 
-Tactical 2D map of Finland with a 4-step operator workflow: login → AOI selection → capability selection → operations view. React + Vite + TypeScript + MapLibre GL JS + react-router-dom + framer-motion. No backend calls yet — layer toggles and time slider are UI-only.
+Tactical 2D map of Finland with a 4-step operator workflow: login → AOI selection → capability selection → operations view. React + Vite + TypeScript + MapLibre GL JS + react-router-dom + framer-motion. Tier-1 natural layers are wired to backend AOI/job APIs and render in the operations map.
 
 ## Run
 

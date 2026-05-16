@@ -30,7 +30,10 @@ async def create_aoi_endpoint(
     job_id = new_id()
 
     create_aoi(aoi_id, req.to_dict())
-    await create_job(job_id, aoi_id, STAGE_NAMES)
+    try:
+        await create_job(job_id, aoi_id, STAGE_NAMES)
+    except Exception:
+        raise HTTPException(status_code=503, detail="Job store unavailable (Redis)")
     background_tasks.add_task(run_job, job_id, aoi_id, req.to_bbox())
 
     return {"aoi_id": aoi_id, "job_id": job_id}
@@ -80,7 +83,10 @@ async def refresh_category(
         meta_path.unlink()
 
     job_id = new_id()
-    await create_job(job_id, aoi_id, [category])
+    try:
+        await create_job(job_id, aoi_id, [category])
+    except Exception:
+        raise HTTPException(status_code=503, detail="Job store unavailable (Redis)")
     background_tasks.add_task(run_job, job_id, aoi_id, bbox)
 
     return {"job_id": job_id, "aoi_id": aoi_id, "refreshing": category}

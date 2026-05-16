@@ -4,8 +4,8 @@ Fetches land cover (forest, open land, built areas) from the NLS OGC
 Features API and writes it as a GeoJSON file.
 
 Output files:
-    {aoi_id}/land/cover.geojson      — NLS 'maanpeite' collection
-    {aoi_id}/land/buildings.geojson  — NLS 'rakennukset' collection
+    {aoi_id}/land/cover.geojson      — NLS 'metsamaankasvillisuus' collection
+    {aoi_id}/land/buildings.geojson  — NLS 'rakennus' collection
     {aoi_id}/land/meta.json
 
 Source:  https://www.maanmittauslaitos.fi/en
@@ -35,7 +35,7 @@ _LIMIT = 500
 
 async def fetch_land(aoi_id: str, bbox: BBox) -> dict:
     """Fetch land cover features and write to disk. Returns a summary dict."""
-    url = f"{_NLS_BASE}/collections/maanpeite/items"
+    url = f"{_NLS_BASE}/collections/metsamaankasvillisuus/items"
     params = {"bbox": str(bbox), "limit": _LIMIT, "f": "json"}
 
     features: list[dict] = []
@@ -46,14 +46,14 @@ async def fetch_land(aoi_id: str, bbox: BBox) -> dict:
         features = resp.json().get("features", [])
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
-            logger.warning("NLS collection 'maanpeite' not found — verify collection ID")
+            logger.warning("NLS collection 'metsamaankasvillisuus' not found — verify collection ID")
         else:
             logger.warning("NLS land HTTP %s", exc.response.status_code)
     except Exception as exc:
         logger.warning("NLS land error: %s", exc)
 
     # 2. Fetch Buildings
-    bldg_url = f"{_NLS_BASE}/collections/rakennukset/items"
+    bldg_url = f"{_NLS_BASE}/collections/rakennus/items"
     buildings: list[dict] = []
     try:
         bldg_resp = await client.get(bldg_url, params=params, auth=auth)

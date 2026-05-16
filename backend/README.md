@@ -25,11 +25,25 @@ pip install -r requirements.txt
 uvicorn src.api.main:app --reload
 ```
 
-## Option 3: Run in Docker
+## Option 3: Run in Docker (backend + Redis)
 
 ```bash
 cd backend
-docker compose up --build
+docker compose up --build backend redis
+```
+
+Detached mode:
+
+```bash
+cd backend
+docker compose up -d --build backend redis
+```
+
+Stop both containers:
+
+```bash
+cd backend
+docker compose down
 ```
 
 ## Test individual parts without uv/docker
@@ -46,6 +60,7 @@ python -c "from src.service.dem_data import fetch_dem_data; print(fetch_dem_data
 
 ```bash
 curl http://localhost:8000/health
-curl http://localhost:8000/wind/ecmwf
-curl http://localhost:8000/terrain/dem
+curl -X POST http://localhost:8000/api/aoi -H "Content-Type: application/json" -d '{"min_lon":24.8,"min_lat":60.1,"max_lon":25.2,"max_lat":60.3}'
+curl http://localhost:8000/api/job/<job_id>/status
+curl http://localhost:8000/api/aoi/<aoi_id>/weather/forecast
 ```
