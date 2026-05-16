@@ -9,13 +9,12 @@ export type AppMode = "select" | "confirm" | "analyze";
 
 export const MAX_AOI_KM = 30;
 
-export type LayerId =
-  | "terrain"
-  | "weather"
-  | "landcover"
-  | "forest"
-  | "infrastructure"
-  | "population";
+/**
+ * Layer ids are strings — typed unions don't compose with the dynamic analysis
+ * registry, where ids come from `src/analyses/`. The well-known source ids are
+ * still listed in `src/sources/index.ts`.
+ */
+export type LayerId = string;
 
 export interface LayerConfig {
   id: LayerId;

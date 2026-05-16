@@ -5,21 +5,34 @@ import { BoundingBox, LayerConfig, LayerId, LayerSection } from "../types";
 import { setArea, bboxToArea } from "../area";
 import { MAPTILER_KEY } from "../config";
 import { CAPABILITIES, Capability } from "../data/capabilities";
-import CapabilityIcon from "../components/icons/CapabilityIcon";
 import LayerPanel from "../components/LayerPanel";
 import TimeSlider from "../components/TimeSlider";
+import ToolPanel from "../components/ToolPanel";
+import { SOURCES } from "../sources";
+import { analysesForCapabilities } from "../analyses";
 
-const INITIAL_LAYERS: LayerConfig[] = [
-  { id: "terrain",        label: "Topography",     sublabel: "Elevation · DEM",         accentColor: "#8a7a5a", visible: false, opacity: 0.7 },
-  { id: "landcover",      label: "Land Type",      sublabel: "Surface classification",  accentColor: "#5a7a5a", visible: false, opacity: 0.65 },
-  { id: "forest",         label: "Forest Cover",   sublabel: "Canopy density",          accentColor: "#2a7a2a", visible: false, opacity: 0.65 },
-  { id: "weather",        label: "Weather",        sublabel: "Open-Meteo forecast",     accentColor: "#2a6db5", visible: false, opacity: 0.6 },
-  { id: "infrastructure", label: "Infrastructure", sublabel: "Roads · bridges · towers", accentColor: "#d4a017", visible: false, opacity: 0.8 },
-  { id: "population",     label: "Population",     sublabel: "Density distribution",    accentColor: "#e8622a", visible: false, opacity: 0.55 },
-];
+const SOURCE_ACCENTS: Record<string, string> = {
+  terrain:    "#8a7a5a",
+  landcover:  "#5a7a5a",
+  forest:     "#2a7a2a",
+  weather:    "#2a6db5",
+  population: "#e8622a",
+};
 
-const BASE_IDS: LayerId[] = ["terrain", "landcover", "forest"];
-const INTEL_IDS: LayerId[] = ["weather", "infrastructure", "population"];
+// Tier-1 source layers derived from the SOURCES registry.
+const INITIAL_LAYERS: LayerConfig[] = SOURCES.map(s => ({
+  id: s.id,
+  label: s.label,
+  sublabel: s.sublabel,
+  accentColor: SOURCE_ACCENTS[s.id] ?? "#8a8880",
+  visible: false,
+  opacity: 0.7,
+  hasData: s.hasData,
+}));
+
+const BASE_IDS: LayerId[]   = SOURCES.filter(s => s.category === "base").map(s => s.id);
+const ATMOS_IDS: LayerId[]  = SOURCES.filter(s => s.category === "atmospheric").map(s => s.id);
+const DEMO_IDS: LayerId[]   = SOURCES.filter(s => s.category === "demographic").map(s => s.id);
 
 function loadAoi(): BoundingBox | null {
   try { return JSON.parse(sessionStorage.getItem("aoi") ?? "null"); }
@@ -49,6 +62,36 @@ export default function OperationsPage() {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [layers, setLayers] = useState<LayerConfig[]>(INITIAL_LAYERS);
+  const [analysisLayers, setAnalysisLayers] = useState<Record<string, { visible: boolean; opacity: number }>>({});
+  const [infraSelected, setInfraSelected] = useState<Set<string>>(new Set());
+
+  const capabilityIds = useMemo(() => capabilities.map(c => c.id), [capabilities]);
+  const availableAnalyses = useMemo(() => analysesForCapabilities(capabilityIds), [capabilityIds]);
+  const analysisLayerConfigs: LayerConfig[] = useMemo(() => availableAnalyses.map(a => {
+    const state = analysisLayers[a.id] ?? { visible: false, opacity: 0.7 };
+    return {
+      id: a.id,
+      label: a.label,
+      sublabel: a.sublabel,
+      accentColor: a.accentColor,
+      visible: state.visible,
+      opacity: state.opacity,
+      hasData: a.hasData,
+    };
+  }), [availableAnalyses, analysisLayers]);
+
+  function toggleInfra(id: string) {
+    setInfraSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function onExport(_kind: "report" | "pdf" | "notes") {
+    // Conceptual — wiring deferred. No-op for now.
+  }
 
   useEffect(() => {
     if (!aoi) {
@@ -109,6 +152,14 @@ export default function OperationsPage() {
   }, [aoi]);
 
   function onLayerChange(id: LayerId, patch: Partial<LayerConfig>) {
+    // Analyses live in their own state so they re-derive cleanly from the registry.
+    if (availableAnalyses.some(a => a.id === id)) {
+      setAnalysisLayers(prev => {
+        const cur = prev[id] ?? { visible: false, opacity: 0.7 };
+        return { ...prev, [id]: { ...cur, ...patch } };
+      });
+      return;
+    }
     setLayers(prev => prev.map(l => (l.id === id ? { ...l, ...patch } : l)));
   }
 
@@ -118,11 +169,17 @@ export default function OperationsPage() {
   }
 
   const sections: LayerSection[] = [
-    { title: "Base Layers", layers: layers.filter(l => BASE_IDS.includes(l.id)) },
-    { title: "Intelligence", layers: layers.filter(l => INTEL_IDS.includes(l.id)) },
+    { title: "Base Layers",  layers: layers.filter(l => BASE_IDS.includes(l.id))  },
+    { title: "Atmospheric",  layers: layers.filter(l => ATMOS_IDS.includes(l.id)) },
+    { title: "Demographic",  layers: layers.filter(l => DEMO_IDS.includes(l.id))  },
+    ...(analysisLayerConfigs.length > 0
+      ? [{ title: "Analyses", layers: analysisLayerConfigs }]
+      : []),
   ];
 
-  const activeCount = layers.filter(l => l.visible).length;
+  const activeCount =
+    layers.filter(l => l.visible).length +
+    analysisLayerConfigs.filter(l => l.visible).length;
 
   if (!aoi) return null;
 
@@ -137,9 +194,15 @@ export default function OperationsPage() {
       />
 
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+        <ToolPanel
+          capabilities={capabilities}
+          infrastructureSelected={infraSelected}
+          onInfrastructureToggle={toggleInfra}
+          onManageForces={() => navigate("/capabilities")}
+          onExport={onExport}
+        />
         <div style={{ flex: 1, position: "relative" }}>
           <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
-          <CapabilityStrip capabilities={capabilities} />
         </div>
         <LayerPanel sections={sections} onChange={onLayerChange} />
       </div>
@@ -207,39 +270,3 @@ function TopBar({ bbox, layersActive, capabilitiesCount, onBack, onNewMission }:
   );
 }
 
-function CapabilityStrip({ capabilities }: { capabilities: Capability[] }) {
-  if (capabilities.length === 0) return null;
-  return (
-    <div
-      style={{
-        position: "absolute",
-        bottom: 12,
-        left: 12,
-        zIndex: 10,
-        display: "flex",
-        gap: 4,
-        padding: 8,
-        background: "var(--color-bg-panel)",
-        border: "1px solid var(--color-border-default)",
-      }}
-    >
-      {capabilities.map(c => (
-        <div
-          key={c.id}
-          title={c.label}
-          style={{
-            width: 40,
-            height: 40,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            border: "1px solid var(--color-border-default)",
-            background: "var(--color-bg-raised)",
-          }}
-        >
-          <CapabilityIcon name={c.icon} size={24} color="var(--color-accent-teal)" />
-        </div>
-      ))}
-    </div>
-  );
-}
