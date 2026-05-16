@@ -30,6 +30,10 @@ from src.service.nls.dem import fetch_dem
 from src.service.nls.land import fetch_land
 from src.service.nls.water import fetch_water
 from src.service.nls.infra import fetch_infra
+<<<<<<< HEAD
+=======
+from src.service.n2yo.satellite import fetch_satellites
+>>>>>>> 78585f40d767ead9813c8f2e6ca93e261811d2f0
 from src.service.analysis.mcoo import build_mcoo
 from src.service.digitraffic.weathercam import fetch_weathercam
 
@@ -37,15 +41,17 @@ logger = logging.getLogger(__name__)
 
 # stage_name must match the category folder name under src/data/{aoi_id}/
 FETCH_STAGES: list[tuple[str, object]] = [
-    ("weather",        fetch_weather),
-    ("water",          fetch_water),
-    ("land",           fetch_land),
-    ("infrastructure", fetch_infra),
+    ("weather",         fetch_weather),
+    ("water",           fetch_water),
+    ("land",            fetch_land),
+    ("infrastructure",  fetch_infra),
+    ("dem",             fetch_dem),
+    ("satellites",      fetch_satellites),
     ("traffic_cameras", fetch_weathercam),
 ]
 
 DERIVED_STAGES: list[tuple[str, object]] = [
-    ("mcoo",           build_mcoo),
+    ("mcoo",            build_mcoo),
 ]
 
 STAGES: list[tuple[str, object]] = FETCH_STAGES + DERIVED_STAGES
