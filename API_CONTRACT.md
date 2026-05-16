@@ -118,11 +118,16 @@ Notes:
 - `GET /api/aoi/{aoi_id}/water/bodies` -> `water/bodies.geojson`
 - `GET /api/aoi/{aoi_id}/water/courses` -> `water/courses.geojson`
 - `GET /api/aoi/{aoi_id}/land/cover` -> `land/cover.geojson`
+- `GET /api/aoi/{aoi_id}/land/cover.png` -> `land/cover.png`
+- `GET /api/aoi/{aoi_id}/land/forest` -> `land/forest.geojson`
+- `GET /api/aoi/{aoi_id}/land/forest.png` -> `land/forest.png`
 - `GET /api/aoi/{aoi_id}/land/buildings` -> `land/buildings.geojson`
 - `GET /api/aoi/{aoi_id}/infrastructure/roads` -> `infrastructure/roads.geojson`
 - `GET /api/aoi/{aoi_id}/dem/elevation` -> `dem/elevation.tiff`
+- `GET /api/aoi/{aoi_id}/dem/elevation.png` -> `dem/elevation.png`
 - `GET /api/aoi/{aoi_id}/satellites/passes` -> `satellites/passes.json`
 - `GET /api/aoi/{aoi_id}/traffic_cameras/stations` -> `traffic_cameras/stations.geojson`
+- `GET /api/aoi/{aoi_id}/traffic_cameras/stations/{station_id}` -> latest camera images and timestamps for one station
 - `GET /api/aoi/{aoi_id}/mcoo/trafficability` -> `mcoo/trafficability.geojson`
 
 All typed reads:

@@ -34,6 +34,18 @@ Frontend should treat each typed endpoint as the stable contract for one data pr
 - File: `land/cover.geojson`
 - Shape: GeoJSON FeatureCollection (land cover polygons)
 
+- Endpoint: `GET /api/aoi/{aoi_id}/land/cover.png`
+- File: `land/cover.png`
+- Shape: Cropped raster overlay PNG for land-use rendering
+
+- Endpoint: `GET /api/aoi/{aoi_id}/land/forest`
+- File: `land/forest.geojson`
+- Shape: GeoJSON FeatureCollection (forest-only polygons derived from land cover)
+
+- Endpoint: `GET /api/aoi/{aoi_id}/land/forest.png`
+- File: `land/forest.png`
+- Shape: Cropped raster overlay PNG for forest-density rendering
+
 - Endpoint: `GET /api/aoi/{aoi_id}/land/buildings`
 - File: `land/buildings.geojson`
 - Shape: GeoJSON FeatureCollection (building footprints)
@@ -50,6 +62,10 @@ Frontend should treat each typed endpoint as the stable contract for one data pr
 - File: `dem/elevation.tiff`
 - Shape: GeoTIFF raster (EPSG:3067 source product)
 
+- Endpoint: `GET /api/aoi/{aoi_id}/dem/elevation.png`
+- File: `dem/elevation.png`
+- Shape: Cropped raster overlay PNG in WGS84 for map rendering
+
 ## Satellites (N2YO)
 
 - Endpoint: `GET /api/aoi/{aoi_id}/satellites/passes`
@@ -64,7 +80,14 @@ Frontend should treat each typed endpoint as the stable contract for one data pr
 - File: `traffic_cameras/stations.geojson`
 - Shape: GeoJSON FeatureCollection of point stations
 - Key properties:
-  - `station_id`, `name`, `municipality`, `road_number`, `collection_status`, `image_url`
+  - `station_id`, `name`, `municipality`, `road_number`, `collection_status`, `updated_at`, `preset_ids`
+
+- Endpoint: `GET /api/aoi/{aoi_id}/traffic_cameras/stations/{station_id}`
+- Shape: JSON object with station metadata plus latest image list
+- Key fields:
+  - `station_id`, `name`, `updated_at`, `location`
+  - `images[]` entries with `preset_id`, `image_url`, `thumbnail_url`, `measured_at`
+  - `latest_image` mirrors the most recent entry in `images`
 
 ## MCOO (Derived)
 

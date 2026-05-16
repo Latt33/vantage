@@ -67,7 +67,23 @@ async def _fetch_towers_bbox(bbox: BBox, limit: int = 2000, depth: int = 0) -> l
     resp = await client.get(_OPENCELLID_URL, params=params)
     resp.raise_for_status()
     data = resp.json()
-    towers = data.get("cells", [])
+
+    if isinstance(data, dict) and data.get("status") == "error":
+        message = data.get("message") or data.get("help") or "OpenCelliD returned an error"
+        raise RuntimeError(str(message))
+
+    if isinstance(data, list):
+        towers = data
+    elif isinstance(data, dict):
+        for key in ("cells", "towers", "results", "data", "response"):
+            value = data.get(key)
+            if isinstance(value, list):
+                towers = value
+                break
+        else:
+            towers = []
+    else:
+        towers = []
 
     if len(towers) >= limit and depth < 4:
         merged: list[dict] = []
@@ -82,15 +98,13 @@ async def fetch_towers(aoi_id: str, bbox: BBox) -> dict:
     """Fetch cell towers from OpenCelliD and write as GeoJSON to disk."""
     if not OPENCELLID_API_KEY:
         logger.warning("OPENCELLID_API_KEY not set — skipping cell tower fetch")
-        fc = {"type": "FeatureCollection", "features": []}
-        write_json(category_file(aoi_id, "cellular", "towers.geojson"), fc)
         write_category_meta(
             aoi_id, "cellular",
             source="OpenCelliD",
             confidence="low",
-            feature_counts={"towers": 0},
+            feature_counts={},
         )
-        return {"source": "OpenCelliD", "error": "Missing API Key"}
+        raise RuntimeError("Missing API Key")
 
     try:
         all_towers = await _fetch_towers_bbox(bbox)
@@ -98,6 +112,17 @@ async def fetch_towers(aoi_id: str, bbox: BBox) -> dict:
         for t in all_towers:
             lon = t.get("lon")
             lat = t.get("lat")
+
+            if lon is None or lat is None:
+                lon = t.get("longitude") or t.get("lng")
+                lat = t.get("latitude")
+
+            if (lon is None or lat is None) and isinstance(t.get("coordinates"), (list, tuple)):
+                coords = t.get("coordinates")
+                if len(coords) >= 2:
+                    lon = coords[0]
+                    lat = coords[1]
+
             if lon is None or lat is None:
                 continue
             features.append({
@@ -132,6 +157,7 @@ async def fetch_towers(aoi_id: str, bbox: BBox) -> dict:
 
     except Exception as exc:
         logger.warning("OpenCelliD fetch error: %s", exc)
+        category_file(aoi_id, "cellular", "towers.geojson").unlink(missing_ok=True)
         write_category_meta(
             aoi_id, "cellular",
             source="OpenCelliD",

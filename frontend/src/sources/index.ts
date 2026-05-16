@@ -57,32 +57,60 @@ function asFeatureCollection(value: unknown): FeatureCollection {
 function isForestFeature(feature: Feature<Geometry>): boolean {
   const values = Object.values(feature.properties ?? {});
   const text = values.map(v => String(v).toLowerCase()).join(" ");
-  return text.includes("forest") || text.includes("wood") || text.includes("mets");
+  const landClass = String((feature.properties as Record<string, unknown> | undefined)?.land_class ?? "").toLowerCase();
+  const landLabel = String((feature.properties as Record<string, unknown> | undefined)?.land_label ?? "").toLowerCase();
+  if (landClass === "forest" || landLabel.includes("forest")) {
+    return true;
+  }
+  return text.includes("forest") || text.includes("wood") || text.includes("mets") || text.includes("metsa");
 }
 
 function classifyLandFeature(feature: Feature<Geometry>): Feature<Geometry> {
-  const values = Object.values(feature.properties ?? {});
-  const text = values.map(v => String(v).toLowerCase()).join(" ");
+  const props = feature.properties ?? {};
+  const text = JSON.stringify(props).toLowerCase();
+  const sourceLabel = String((props as Record<string, unknown>).nls_label ?? "").toLowerCase();
+  const sourceCollection = String((props as Record<string, unknown>).nls_collection ?? "").toLowerCase();
+  const haystack = `${text} ${sourceLabel} ${sourceCollection}`;
+  const backendLandClass = String((props as Record<string, unknown>).land_class ?? "").toLowerCase();
+  const backendLandLabel = String((props as Record<string, unknown>).land_label ?? "").toLowerCase();
 
   let landClass = "other";
   let landLabel = "Other";
 
-  if (text.includes("forest") || text.includes("wood") || text.includes("mets")) {
+  if (backendLandClass === "forest" || backendLandLabel.includes("forest")) {
     landClass = "forest";
     landLabel = "Forest";
-  } else if (text.includes("building") || text.includes("rakenn") || text.includes("house") || text.includes("built")) {
+  } else if (haystack.includes("forest") || haystack.includes("wood") || haystack.includes("mets") || haystack.includes("metsa")) {
+    landClass = "forest";
+    landLabel = "Forest";
+  } else if (backendLandClass === "built" || backendLandLabel.includes("built")) {
     landClass = "built";
     landLabel = "Built-up";
-  } else if (text.includes("water") || text.includes("lake") || text.includes("river") || text.includes("vesi")) {
+  } else if (haystack.includes("building") || haystack.includes("rakenn") || haystack.includes("house") || haystack.includes("built") || haystack.includes("asuin") || haystack.includes("teoll")) {
+    landClass = "built";
+    landLabel = "Built-up";
+  } else if (backendLandClass === "water" || backendLandLabel.includes("water")) {
     landClass = "water";
     landLabel = "Water";
-  } else if (text.includes("swamp") || text.includes("wetland") || text.includes("suo")) {
+  } else if (haystack.includes("water") || haystack.includes("lake") || haystack.includes("river") || haystack.includes("vesi") || haystack.includes("järvi") || haystack.includes("jarvi")) {
+    landClass = "water";
+    landLabel = "Water";
+  } else if (backendLandClass === "wetland" || backendLandLabel.includes("wetland")) {
     landClass = "wetland";
     landLabel = "Wetland";
-  } else if (text.includes("field") || text.includes("grass") || text.includes("meadow") || text.includes("pelto") || text.includes("niitty")) {
+  } else if (haystack.includes("swamp") || haystack.includes("wetland") || haystack.includes("suo") || haystack.includes("bog") || haystack.includes("marsh")) {
+    landClass = "wetland";
+    landLabel = "Wetland";
+  } else if (backendLandClass === "open" || backendLandLabel.includes("open")) {
     landClass = "open";
     landLabel = "Open Land";
-  } else if (text.includes("rock") || text.includes("kallio")) {
+  } else if (haystack.includes("field") || haystack.includes("grass") || haystack.includes("meadow") || haystack.includes("pelto") || haystack.includes("niitty") || haystack.includes("open")) {
+    landClass = "open";
+    landLabel = "Open Land";
+  } else if (backendLandClass === "rock" || backendLandLabel.includes("rock")) {
+    landClass = "rock";
+    landLabel = "Rock";
+  } else if (haystack.includes("rock") || haystack.includes("kallio") || haystack.includes("bedrock")) {
     landClass = "rock";
     landLabel = "Rock";
   }
@@ -104,7 +132,15 @@ function median(values: number[]): number {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
-function gridPointsToCells(fc: FeatureCollection): FeatureCollection {
+function toFiniteNumber(value: unknown): number | null {
+  const next = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(next) ? next : null;
+}
+
+function gridPointsToCells(
+  fc: FeatureCollection,
+  cellSize?: { lonStep?: number; latStep?: number },
+): FeatureCollection {
   const points = fc.features.filter((f) => f.geometry?.type === "Point" && Array.isArray((f.geometry as { coordinates?: unknown }).coordinates));
   if (points.length === 0) return fc;
 
@@ -126,8 +162,8 @@ function gridPointsToCells(fc: FeatureCollection): FeatureCollection {
     if (diff > 0) latDiffs.push(diff);
   }
 
-  const halfLon = (median(lonDiffs) || 0.00005) / 2;
-  const halfLat = (median(latDiffs) || 0.00005) / 2;
+  const halfLon = ((cellSize?.lonStep ?? median(lonDiffs)) || 0.00005) / 2;
+  const halfLat = ((cellSize?.latStep ?? median(latDiffs)) || 0.00005) / 2;
 
   return {
     type: "FeatureCollection",
@@ -156,7 +192,7 @@ function gridPointsToCells(fc: FeatureCollection): FeatureCollection {
 async function loadTerrain(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
   const aoiId = getBackendAoiId(area);
   const raw = await fetchJson(`/api/aoi/${aoiId}/dem/elevation`, signal);
-  return gridPointsToCells(asFeatureCollection(raw));
+  return asFeatureCollection(raw);
 }
 
 async function loadLandcover(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
@@ -170,10 +206,15 @@ async function loadLandcover(area: AreaContext, signal?: AbortSignal): Promise<F
 }
 
 async function loadForest(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
-  const fc = await loadLandcover(area, signal);
+  const aoiId = getBackendAoiId(area);
+  const raw = await fetchJson(`/api/aoi/${aoiId}/land/forest`, signal);
+  const fc = asFeatureCollection(raw);
   return {
     type: "FeatureCollection",
-    features: fc.features.filter(isForestFeature),
+    features: fc.features.filter((feature) => {
+      const landClass = String((feature.properties as Record<string, unknown> | undefined)?.land_class ?? "").toLowerCase();
+      return landClass === "forest" || isForestFeature(feature);
+    }),
   };
 }
 
@@ -225,7 +266,7 @@ async function loadWeather(area: AreaContext, signal?: AbortSignal): Promise<Fea
     features: fc.features.filter((f) => f.properties?.valid_time === firstTime),
   };
 
-  return gridPointsToCells(filtered);
+  return gridPointsToCells(filtered, { lonStep: 0.25, latStep: 0.25 });
 }
 
 // ── Infrastructure ────────────────────────────────────────────────────────────
@@ -236,12 +277,52 @@ async function loadInfraRoads(area: AreaContext, signal?: AbortSignal): Promise<
   return asFeatureCollection(raw);
 }
 
+async function loadRail(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
+  const aoiId = getBackendAoiId(area);
+  const raw = await fetchJson(`/api/aoi/${aoiId}/infrastructure/rail`, signal);
+  return asFeatureCollection(raw);
+}
+
+async function loadTrafficCameras(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
+  const aoiId = getBackendAoiId(area);
+  const raw = await fetchJson(`/api/aoi/${aoiId}/traffic_cameras/stations`, signal);
+  return asFeatureCollection(raw);
+}
+
 // ── Surveillance ──────────────────────────────────────────────────────────────
 
 async function loadCellular(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
   const aoiId = getBackendAoiId(area);
   const raw = await fetchJson(`/api/aoi/${aoiId}/cellular/towers`, signal);
-  return asFeatureCollection(raw);
+  const fc = asFeatureCollection(raw);
+  const features = fc.features
+    .map((feature) => {
+      if (feature.geometry?.type !== "Point") return null;
+      const coordinates = (feature.geometry as unknown as { coordinates?: unknown }).coordinates;
+      if (!Array.isArray(coordinates) || coordinates.length < 2) return null;
+
+      const lon = toFiniteNumber(coordinates[0]);
+      const lat = toFiniteNumber(coordinates[1]);
+      if (lon === null || lat === null) return null;
+
+      return {
+        ...feature,
+        geometry: {
+          type: "Point" as const,
+          coordinates: [lon, lat] as [number, number],
+        },
+        properties: {
+          ...(feature.properties ?? {}),
+          range: toFiniteNumber(feature.properties?.range) ?? feature.properties?.range,
+        },
+      } as Feature<Geometry>;
+    })
+    .filter((feature): feature is NonNullable<typeof feature> => feature !== null);
+
+  return {
+    ...fc,
+    features,
+  };
 }
 
 async function loadSatellites(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
@@ -262,8 +343,10 @@ export const SOURCES: DataSource[] = [
   { id: "weather",          label: "Weather",         sublabel: "ECMWF forecast grid",      category: "atmospheric",    hasData: false, load: loadWeather },
   // Infrastructure
   { id: "infra_roads",      label: "Roads",           sublabel: "Highway network",          category: "infrastructure", hasData: false, load: loadInfraRoads },
+  { id: "infra_rail",       label: "Railways",        sublabel: "Track · Junctions",        category: "infrastructure", hasData: false, load: loadRail },
   // Surveillance
   { id: "cellular",         label: "Cell Towers",     sublabel: "RF coverage · Relays",     category: "surveillance",   hasData: false, load: loadCellular },
+  { id: "traffic_cameras",   label: "Road Cameras",    sublabel: "Live weather cameras",     category: "surveillance",   hasData: false, load: loadTrafficCameras },
   { id: "satellites",       label: "Satellites",      sublabel: "Recon window · Overhead",  category: "surveillance",   hasData: false, load: loadSatellites },
 ];
 

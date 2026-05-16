@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import maplibregl from "maplibre-gl";
-import type { FeatureCollection } from "geojson";
+import type { Feature, FeatureCollection, Geometry } from "geojson";
 import { BoundingBox, LayerConfig, LayerId, LayerSection, WeatherMetricId } from "../types";
 import { bboxToArea, setArea } from "../area";
 import { API_BASE_URL, MAPTILER_KEY } from "../config";
@@ -13,6 +13,7 @@ import MissionWindowModal, {
   DEFAULT_CONDITIONS,
   MissionConditionsUi,
 } from "../components/MissionWindowModal";
+import TrafficCameraModal, { TrafficCameraStationDetail } from "../components/TrafficCameraModal";
 import ExportIpbReportModal, { ExportLegendState } from "../export/ExportIpbReportModal";
 import { SOURCES, loadSource } from "../sources";
 import { analysesForCapabilities } from "../analyses";
@@ -25,11 +26,147 @@ const SOURCE_ACCENTS: Record<string, string> = {
   water:       "#2a6db5",
   weather:     "#2a6db5",
   infra_roads: "#a8a8a0",
+  infra_rail:  "#d47c2f",
   cellular:    "#2a9d8a",
+  traffic_cameras: "#e8622a",
   satellites:  "#8060c8",
 };
 
 const EMPTY_FC: FeatureCollection = { type: "FeatureCollection", features: [] };
+
+const SATELLITE_COMPASS_BEARINGS: Record<string, number> = {
+  N: 0,
+  NNE: 22.5,
+  NE: 45,
+  ENE: 67.5,
+  E: 90,
+  ESE: 112.5,
+  SE: 135,
+  SSE: 157.5,
+  S: 180,
+  SSW: 202.5,
+  SW: 225,
+  WSW: 247.5,
+  W: 270,
+  WNW: 292.5,
+  NW: 315,
+  NNW: 337.5,
+};
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function toEpochMs(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 1e12 ? value : value * 1000;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) {
+      return numeric > 1e12 ? numeric : numeric * 1000;
+    }
+    const parsed = Date.parse(trimmed);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+}
+
+function toBearingDeg(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return ((value % 360) + 360) % 360;
+  }
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().toUpperCase();
+  if (!trimmed) return null;
+  if (trimmed in SATELLITE_COMPASS_BEARINGS) {
+    return SATELLITE_COMPASS_BEARINGS[trimmed];
+  }
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? ((parsed % 360) + 360) % 360 : null;
+}
+
+function projectPoint(
+  lon: number,
+  lat: number,
+  bearingDeg: number,
+  distanceMeters: number,
+): [number, number] {
+  const earthRadiusMeters = 6_371_000;
+  const angularDistance = distanceMeters / earthRadiusMeters;
+  const bearingRad = (bearingDeg * Math.PI) / 180;
+  const latRad = (lat * Math.PI) / 180;
+  const lonRad = (lon * Math.PI) / 180;
+
+  const nextLat = Math.asin(
+    Math.max(-1, Math.min(1, Math.sin(latRad) * Math.cos(angularDistance) + Math.cos(latRad) * Math.sin(angularDistance) * Math.cos(bearingRad)))
+  );
+  const nextLon = lonRad + Math.atan2(
+    Math.sin(bearingRad) * Math.sin(angularDistance) * Math.cos(latRad),
+    Math.cos(angularDistance) - Math.sin(latRad) * Math.sin(nextLat),
+  );
+
+  return [((nextLon * 180) / Math.PI + 540) % 360 - 180, (nextLat * 180) / Math.PI];
+}
+
+function squareRing(centerLon: number, centerLat: number, sizeMeters: number): [number, number][] {
+  const half = sizeMeters / 2;
+  return [
+    projectPoint(centerLon, centerLat, 315, half),
+    projectPoint(centerLon, centerLat, 45, half),
+    projectPoint(centerLon, centerLat, 135, half),
+    projectPoint(centerLon, centerLat, 225, half),
+    projectPoint(centerLon, centerLat, 315, half),
+  ];
+}
+
+function buildSatelliteDisplayData(raw: FeatureCollection, aoi: BoundingBox | null, offsetHours: number): FeatureCollection {
+  if (!aoi) return EMPTY_FC;
+
+  const centerLon = (aoi.minLon + aoi.maxLon) / 2;
+  const centerLat = (aoi.minLat + aoi.maxLat) / 2;
+  const lonSpanMeters = Math.abs(aoi.maxLon - aoi.minLon) * 111_320 * Math.cos((centerLat * Math.PI) / 180);
+  const latSpanMeters = Math.abs(aoi.maxLat - aoi.minLat) * 111_320;
+  const trackRadius = Math.max(8_000, Math.max(lonSpanMeters, latSpanMeters) * 0.55);
+  const boxSize = Math.max(250, Math.max(lonSpanMeters, latSpanMeters) * 0.04);
+  const selectedMs = Date.now() + offsetHours * 3_600_000;
+
+  const features: Feature<Geometry>[] = [];
+  for (const feature of raw.features ?? []) {
+    const props = (feature.properties ?? {}) as Record<string, unknown>;
+    const startMs = toEpochMs(props.start_time ?? props.startUTC ?? props.startUtc);
+    const endMs = toEpochMs(props.end_time ?? props.endUTC ?? props.endUtc);
+    const startBearing = toBearingDeg(props.start_az_compass ?? props.startAzCompass ?? props.startAz ?? props.start_azimuth);
+    const endBearing = toBearingDeg(props.end_az_compass ?? props.endAzCompass ?? props.endAz ?? props.end_azimuth);
+
+    if (startMs === null || endMs === null || startBearing === null || endBearing === null) continue;
+
+    const startPoint = projectPoint(centerLon, centerLat, startBearing, trackRadius);
+    const endPoint = projectPoint(centerLon, centerLat, endBearing, trackRadius);
+
+    features.push({
+      type: "Feature",
+      geometry: { type: "LineString", coordinates: [startPoint, endPoint] },
+      properties: { ...props, kind: "track" },
+    } as Feature<Geometry>);
+
+    if (selectedMs < startMs || selectedMs > endMs || endMs <= startMs) continue;
+
+    const fraction = clamp((selectedMs - startMs) / (endMs - startMs), 0, 1);
+    const currentLon = startPoint[0] + (endPoint[0] - startPoint[0]) * fraction;
+    const currentLat = startPoint[1] + (endPoint[1] - startPoint[1]) * fraction;
+
+    features.push({
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [squareRing(currentLon, currentLat, boxSize)] },
+      properties: { ...props, kind: "active", progress: fraction },
+    } as Feature<Geometry>);
+  }
+
+  return { type: "FeatureCollection", features };
+}
 
 const INITIAL_LAYERS: LayerConfig[] = SOURCES.map((s) => ({
   id: s.id,
@@ -54,26 +191,27 @@ const MAP_SOURCE_IDS: Record<string, string> = {
   weather:     "natural-weather-src",
   terrain:     "dem-terrain-src",
   infra_roads: "infra-roads-src",
+  infra_rail:  "infra-rail-src",
   cellular:    "cellular-src",
+  traffic_cameras: "traffic-cameras-src",
   satellites:  "satellites-src",
 };
 
 // MapLibre layer ids that each data source drives
 const MAP_LAYER_IDS: Record<string, string[]> = {
-  landcover:   ["natural-landcover-fill", "natural-landcover-line", "natural-landcover-label"],
-  forest:      ["natural-forest-fill"],
+  landcover:   ["natural-landcover-raster"],
+  forest:      ["natural-forest-raster"],
   water:       ["natural-water-fill", "natural-water-line"],
   weather:     ["natural-weather-cloud-amount", "natural-weather-cloud-height", "natural-weather-visibility", "natural-weather-temperature", "natural-weather-wind-speed"],
-  terrain:     ["dem-terrain-fill"],
+  terrain:     ["dem-terrain-raster"],
   infra_roads: ["infra-roads-line"],
-  cellular:    ["cellular-circle"],
-  satellites:  ["satellites-circle"],
+  infra_rail:  ["infra-rail-line"],
+  cellular:    ["cellular-halo", "cellular-circle"],
+  traffic_cameras: ["traffic-camera-symbol"],
+  satellites:  ["satellites-track-line", "satellites-box-fill"],
 };
 
-const MAP_LAYER_OPACITY_PROP: Record<string, "fill-opacity" | "line-opacity" | "circle-opacity" | "heatmap-opacity"> = {
-  "natural-landcover-fill": "fill-opacity",
-  "natural-landcover-line": "line-opacity",
-  "natural-forest-fill":    "fill-opacity",
+const MAP_LAYER_OPACITY_PROP: Record<string, "fill-opacity" | "line-opacity" | "circle-opacity" | "heatmap-opacity" | "raster-opacity" | "icon-opacity"> = {
   "natural-water-fill":     "fill-opacity",
   "natural-water-line":     "line-opacity",
   "natural-weather-cloud-amount":   "fill-opacity",
@@ -81,10 +219,16 @@ const MAP_LAYER_OPACITY_PROP: Record<string, "fill-opacity" | "line-opacity" | "
   "natural-weather-visibility":      "fill-opacity",
   "natural-weather-temperature":     "fill-opacity",
   "natural-weather-wind-speed":      "fill-opacity",
-  "dem-terrain-fill":       "fill-opacity",
+  "natural-landcover-raster": "raster-opacity",
+  "natural-forest-raster":    "raster-opacity",
+  "dem-terrain-raster":      "raster-opacity",
   "infra-roads-line":       "line-opacity",
+  "infra-rail-line":        "line-opacity",
+  "cellular-halo":          "circle-opacity",
   "cellular-circle":        "circle-opacity",
-  "satellites-circle":      "circle-opacity",
+  "traffic-camera-symbol":  "icon-opacity",
+  "satellites-track-line":  "line-opacity",
+  "satellites-box-fill":    "fill-opacity",
 };
 
 const DEFAULT_WEATHER_METRICS: Record<WeatherMetricId, boolean> = {
@@ -111,7 +255,9 @@ const SOURCE_STAGE: Record<string, string> = {
   weather:     "weather",
   terrain:     "dem",
   infra_roads: "infrastructure",
+  infra_rail:  "rail",
   cellular:    "cellular",
+  traffic_cameras: "traffic_cameras",
   satellites:  "satellites",
 };
 
@@ -163,6 +309,11 @@ export default function OperationsPage() {
   const [missionWindowOpen, setMissionWindowOpen] = useState(false);
   const [missionConditions, setMissionConditions] = useState<MissionConditionsUi>(DEFAULT_CONDITIONS);
   const [missionWindows, setMissionWindows] = useState<MissionWindowBand[]>([]);
+  const [timelineOffsetHours, setTimelineOffsetHours] = useState(0);
+  const [cameraStation, setCameraStation] = useState<{ stationId: string; stationName: string | null } | null>(null);
+  const [cameraDetail, setCameraDetail] = useState<TrafficCameraStationDetail | null>(null);
+  const [cameraLoading, setCameraLoading] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
 
   const [jobInfo, setJobInfo] = useState<JobInfo | null>(null);
   const [stages, setStages] = useState<Record<string, string>>({});
@@ -174,7 +325,9 @@ export default function OperationsPage() {
     weather:     EMPTY_FC,
     terrain:     EMPTY_FC,
     infra_roads: EMPTY_FC,
+    infra_rail:  EMPTY_FC,
     cellular:    EMPTY_FC,
+    traffic_cameras: EMPTY_FC,
     satellites:  EMPTY_FC,
   });
 
@@ -206,10 +359,56 @@ export default function OperationsPage() {
     };
   }, [aoi, jobInfo]);
 
+  const satelliteDisplayData = useMemo(
+    () => buildSatelliteDisplayData(sourceData.satellites, aoi, timelineOffsetHours),
+    [aoi, sourceData.satellites, timelineOffsetHours],
+  );
+
+  useEffect(() => {
+    const currentJob = jobInfo;
+    const currentCamera = cameraStation;
+    if (!currentJob || !currentCamera) return;
+    const aoiId = currentJob.aoiId;
+    const stationId = currentCamera.stationId;
+    let active = true;
+    const controller = new AbortController();
+
+    async function loadCameraDetail() {
+      setCameraLoading(true);
+      setCameraError(null);
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/aoi/${aoiId}/traffic_cameras/stations/${stationId}`,
+          { signal: controller.signal },
+        );
+        if (!res.ok) {
+          throw new Error(`request failed (${res.status})`);
+        }
+        const payload = (await res.json()) as TrafficCameraStationDetail;
+        if (!active) return;
+        setCameraDetail(payload);
+      } catch (error) {
+        if ((error as Error)?.name === "AbortError") return;
+        if (!active) return;
+        setCameraDetail(null);
+        setCameraError("Unable to load the latest camera images.");
+      } finally {
+        if (active) setCameraLoading(false);
+      }
+    }
+
+    loadCameraDetail();
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [cameraStation, jobInfo]);
+
   // Mapping from infra node id -> source id in SOURCES (if implemented)
   const INFRA_TO_SOURCE: Record<string, string | undefined> = {
     roads: "infra_roads",
-    rail: "infra_roads",
+    rail: "infra_rail",
     towers: "cellular",
   };
 
@@ -418,15 +617,6 @@ export default function OperationsPage() {
       });
 
       // ── Base ──────────────────────────────────────────────────────────────
-      map.addSource(MAP_SOURCE_IDS.forest, { type: "geojson", data: EMPTY_FC });
-      map.addLayer({
-        id: "natural-forest-fill",
-        type: "fill",
-        source: MAP_SOURCE_IDS.forest,
-        layout: { visibility: "none" },
-        paint: { "fill-color": "#2a7a2a", "fill-opacity": 0.45 },
-      });
-
       map.addSource(MAP_SOURCE_IDS.water, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
         id: "natural-water-fill",
@@ -445,63 +635,24 @@ export default function OperationsPage() {
         paint: { "line-color": "#4e8ad1", "line-width": 1.6, "line-opacity": 0.8 },
       });
 
-      map.addSource(MAP_SOURCE_IDS.landcover, { type: "geojson", data: EMPTY_FC });
-      map.addLayer({
-        id: "natural-landcover-fill",
-        type: "fill",
-        source: MAP_SOURCE_IDS.landcover,
-        layout: { visibility: "none" },
-        paint: {
-          "fill-color": [
-            "match",
-            ["coalesce", ["get", "land_class"], "other"],
-            "forest", "#2a7a2a",
-            "built", "#8b5a2b",
-            "water", "#2a6db5",
-            "wetland", "#4f7f5b",
-            "open", "#a8b85f",
-            "rock", "#7a7a7a",
-            "other", "#5a7a5a",
-            "#5a7a5a",
-          ],
-          "fill-opacity": 0.55,
-        },
-      });
-      map.addLayer({
-        id: "natural-landcover-line",
-        type: "line",
-        source: MAP_SOURCE_IDS.landcover,
-        layout: { visibility: "none" },
-        paint: { "line-color": "#d9d4c8", "line-width": 0.6, "line-opacity": 0.6 },
-      });
-      map.addLayer({
-        id: "natural-landcover-label",
-        type: "symbol",
-        source: MAP_SOURCE_IDS.landcover,
-        layout: {
-          visibility: "none",
-          "text-field": ["coalesce", ["get", "land_label"], ["get", "land_class"], "Land"],
-          "text-size": 10,
-          "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
-          "text-anchor": "center",
-          "text-allow-overlap": false,
-        },
-        paint: {
-          "text-color": "#f5f1e8",
-          "text-halo-color": "#111111",
-          "text-halo-width": 1,
-        },
-      });
+      // Landcover and forest rasters are added after the land stage completes.
 
       // DEM elevation grid — rendered as polygon cells so it reads like a raster surface
       map.addSource(MAP_SOURCE_IDS.terrain, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
-        id: "dem-terrain-fill",
-        type: "fill",
+        id: "dem-terrain-circle",
+        type: "circle",
         source: MAP_SOURCE_IDS.terrain,
         layout: { visibility: "none" },
         paint: {
-          "fill-color": [
+          "circle-radius": [
+            "interpolate", ["linear"], ["zoom"],
+            6, 2,
+            10, 3,
+            13, 4,
+            16, 6,
+          ],
+          "circle-color": [
             "interpolate", ["linear"], ["coalesce", ["get", "elevation_m"], 0],
             0,   "#1e3a1e",
             30,  "#2e5c1e",
@@ -510,8 +661,9 @@ export default function OperationsPage() {
             250, "#a0b860",
             400, "#c8c880",
           ],
-          "fill-opacity": 0.9,
-          "fill-outline-color": "rgba(0,0,0,0.14)",
+          "circle-opacity": 0.86,
+          "circle-stroke-color": "rgba(0,0,0,0.15)",
+          "circle-stroke-width": 0.3,
         },
       });
 
@@ -588,15 +740,75 @@ export default function OperationsPage() {
         },
       });
 
+      map.addSource(MAP_SOURCE_IDS.infra_rail, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "infra-rail-line",
+        type: "line",
+        source: MAP_SOURCE_IDS.infra_rail,
+        layout: { visibility: "none" },
+        paint: {
+          "line-color": [
+            "match",
+            ["coalesce", ["get", "railway"], "other"],
+            "rail", "#e0c56b",
+            "light_rail", "#f2b134",
+            "subway", "#c07db0",
+            "tram", "#d47c2f",
+            "abandoned", "#8a8a8a",
+            "other", "#d47c2f",
+            "#d47c2f",
+          ],
+          "line-width": [
+            "interpolate", ["linear"], ["zoom"],
+            7, 1,
+            10, 1.6,
+            13, 2.4,
+            16, 3.2,
+          ],
+          "line-opacity": 0.92,
+        },
+      });
+
       // ── Surveillance ──────────────────────────────────────────────────────
       map.addSource(MAP_SOURCE_IDS.cellular, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "cellular-halo",
+        type: "circle",
+        source: MAP_SOURCE_IDS.cellular,
+        layout: { visibility: "none" },
+        paint: {
+          "circle-radius": [
+            "interpolate",
+            ["linear"],
+            ["coalesce", ["get", "range"], 0],
+            0, 7,
+            500, 8,
+            2000, 10,
+            10000, 13,
+            50000, 18,
+          ],
+          "circle-color": "#6fe0cd",
+          "circle-stroke-color": "#17322f",
+          "circle-stroke-width": 0.5,
+          "circle-opacity": 0.18,
+        },
+      });
       map.addLayer({
         id: "cellular-circle",
         type: "circle",
         source: MAP_SOURCE_IDS.cellular,
         layout: { visibility: "none" },
         paint: {
-          "circle-radius": 5,
+          "circle-radius": [
+            "interpolate",
+            ["linear"],
+            ["coalesce", ["get", "range"], 0],
+            0, 4,
+            500, 5,
+            2000, 7,
+            10000, 11,
+            50000, 16,
+          ],
           "circle-color": "#2a9d8a",
           "circle-stroke-color": "#111111",
           "circle-stroke-width": 1,
@@ -604,18 +816,46 @@ export default function OperationsPage() {
         },
       });
 
+      map.addSource(MAP_SOURCE_IDS.traffic_cameras, { type: "geojson", data: EMPTY_FC });
+      map.addImage("traffic-camera-icon", createTrafficCameraIcon());
+      map.addLayer({
+        id: "traffic-camera-symbol",
+        type: "symbol",
+        source: MAP_SOURCE_IDS.traffic_cameras,
+        layout: {
+          visibility: "none",
+          "icon-image": "traffic-camera-icon",
+          "icon-size": 0.8,
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+        },
+        paint: {
+          "icon-opacity": 0.95,
+        },
+      });
+
       map.addSource(MAP_SOURCE_IDS.satellites, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
-        id: "satellites-circle",
-        type: "circle",
+        id: "satellites-track-line",
+        type: "line",
         source: MAP_SOURCE_IDS.satellites,
         layout: { visibility: "none" },
         paint: {
-          "circle-radius": 9,
-          "circle-color": "#8060c8",
-          "circle-stroke-color": "#c0b0f0",
-          "circle-stroke-width": 1.5,
-          "circle-opacity": 0.9,
+          "line-color": "#8060c8",
+          "line-width": 2.5,
+          "line-opacity": 0.9,
+        },
+      });
+      map.addLayer({
+        id: "satellites-box-fill",
+        type: "fill",
+        source: MAP_SOURCE_IDS.satellites,
+        layout: { visibility: "none" },
+        filter: ["==", ["geometry-type"], "Polygon"],
+        paint: {
+          "fill-color": "#c6b8ff",
+          "fill-opacity": 0.32,
+          "fill-outline-color": "#f0e9ff",
         },
       });
 
@@ -636,18 +876,147 @@ export default function OperationsPage() {
     if (!map) return;
 
     for (const [id, data] of Object.entries(sourceData)) {
+      if (id === "terrain" || id === "landcover" || id === "forest") continue;
       const sourceId = MAP_SOURCE_IDS[id];
       if (!sourceId) continue;
       const src = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
       if (!src) continue;
       try {
-        src.setData(data);
-        console.info(`[map] source ${sourceId} setData — features=${(data as any).features?.length ?? 0}`);
+        const payload = id === "satellites" ? satelliteDisplayData : data;
+        src.setData(payload);
+        console.info(`[map] source ${sourceId} setData — features=${(payload as any).features?.length ?? 0}`);
       } catch (err) {
         console.warn(`[map] failed to setData for ${sourceId}`, err);
       }
     }
-  }, [mapReady, sourceData]);
+  }, [mapReady, satelliteDisplayData, sourceData]);
+
+  useEffect(() => {
+    if (!mapReady || !aoi || !jobInfo) return;
+    if (stages.land !== "done") return;
+
+    const map = mapRef.current;
+    if (!map) return;
+
+    const sourceId = MAP_SOURCE_IDS.forest;
+    const layerId = "natural-forest-raster";
+    const imageUrl = `${API_BASE_URL}/api/aoi/${jobInfo.aoiId}/land/forest.png?v=${encodeURIComponent(jobInfo.jobId)}`;
+    const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
+      [aoi.minLon, aoi.maxLat],
+      [aoi.maxLon, aoi.maxLat],
+      [aoi.maxLon, aoi.minLat],
+      [aoi.minLon, aoi.minLat],
+    ];
+
+    if (map.getLayer(layerId)) {
+      map.removeLayer(layerId);
+    }
+    if (map.getSource(sourceId)) {
+      map.removeSource(sourceId);
+    }
+
+    map.addSource(sourceId, {
+      type: "image",
+      url: imageUrl,
+      coordinates,
+    });
+    map.addLayer({
+      id: layerId,
+      type: "raster",
+      source: sourceId,
+      layout: { visibility: layers.find((layer) => layer.id === "forest")?.visible ? "visible" : "none" },
+      paint: {
+        "raster-opacity": 0.72,
+        "raster-resampling": "nearest",
+      },
+    });
+  }, [aoi, jobInfo, mapReady, stages.land, layers]);
+
+  useEffect(() => {
+    if (!mapReady || !aoi || !jobInfo) return;
+    if (stages.land !== "done") return;
+
+    const map = mapRef.current;
+    if (!map) return;
+
+    const sourceId = MAP_SOURCE_IDS.landcover;
+    const layerId = "natural-landcover-raster";
+    const imageUrl = `${API_BASE_URL}/api/aoi/${jobInfo.aoiId}/land/cover.png?v=${encodeURIComponent(jobInfo.jobId)}`;
+    const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
+      [aoi.minLon, aoi.maxLat],
+      [aoi.maxLon, aoi.maxLat],
+      [aoi.maxLon, aoi.minLat],
+      [aoi.minLon, aoi.minLat],
+    ];
+
+    if (map.getLayer(layerId)) {
+      map.removeLayer(layerId);
+    }
+    if (map.getSource(sourceId)) {
+      map.removeSource(sourceId);
+    }
+
+    map.addSource(sourceId, {
+      type: "image",
+      url: imageUrl,
+      coordinates,
+    });
+    map.addLayer({
+      id: layerId,
+      type: "raster",
+      source: sourceId,
+      layout: { visibility: layers.find((layer) => layer.id === "landcover")?.visible ? "visible" : "none" },
+      paint: {
+        "raster-opacity": 0.82,
+        "raster-resampling": "nearest",
+      },
+    });
+  }, [aoi, jobInfo, mapReady, stages.land, layers]);
+
+  useEffect(() => {
+    if (!mapReady || !aoi || !jobInfo) return;
+    if (stages.dem !== "done") return;
+
+    const map = mapRef.current;
+    if (!map) return;
+
+    const sourceId = MAP_SOURCE_IDS.terrain;
+    const layerId = "dem-terrain-raster";
+    const placeholderLayerId = "dem-terrain-circle";
+    const imageUrl = `${API_BASE_URL}/api/aoi/${jobInfo.aoiId}/dem/elevation.png?v=${encodeURIComponent(jobInfo.jobId)}`;
+    const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
+      [aoi.minLon, aoi.maxLat],
+      [aoi.maxLon, aoi.maxLat],
+      [aoi.maxLon, aoi.minLat],
+      [aoi.minLon, aoi.minLat],
+    ];
+
+    if (map.getLayer(placeholderLayerId)) {
+      map.removeLayer(placeholderLayerId);
+    }
+    if (map.getLayer(layerId)) {
+      map.removeLayer(layerId);
+    }
+    if (map.getSource(sourceId)) {
+      map.removeSource(sourceId);
+    }
+
+    map.addSource(sourceId, {
+      type: "image",
+      url: imageUrl,
+      coordinates,
+    });
+    map.addLayer({
+      id: layerId,
+      type: "raster",
+      source: sourceId,
+      layout: { visibility: layers.find((layer) => layer.id === "terrain")?.visible ? "visible" : "none" },
+      paint: {
+        "raster-opacity": 0.96,
+        "raster-resampling": "nearest",
+      },
+    });
+  }, [aoi, jobInfo, mapReady, stages.dem]);
 
   // Sync layer visibility + opacity into MapLibre
   useEffect(() => {
@@ -692,6 +1061,42 @@ export default function OperationsPage() {
     }
   }, [layers, weatherMetrics, mapReady]);
 
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current;
+    if (!map) return;
+
+    const cameraLayerId = "traffic-camera-symbol";
+    const handleClick = (event: maplibregl.MapLayerMouseEvent) => {
+      const feature = event.features?.[0];
+      const props = feature?.properties as Record<string, unknown> | undefined;
+      const stationId = typeof props?.station_id === "string" ? props.station_id : undefined;
+      if (!stationId) return;
+      setCameraStation({
+        stationId,
+        stationName: typeof props?.name === "string" ? props.name : null,
+      });
+    };
+
+    const handleEnter = () => {
+      map.getCanvas().style.cursor = "pointer";
+    };
+
+    const handleLeave = () => {
+      map.getCanvas().style.cursor = "";
+    };
+
+    map.on("click", cameraLayerId, handleClick);
+    map.on("mouseenter", cameraLayerId, handleEnter);
+    map.on("mouseleave", cameraLayerId, handleLeave);
+
+    return () => {
+      map.off("click", cameraLayerId, handleClick);
+      map.off("mouseenter", cameraLayerId, handleEnter);
+      map.off("mouseleave", cameraLayerId, handleLeave);
+    };
+  }, [mapReady]);
+
   // Sync loadState badges with backend stage status.
   // Does NOT include `layers` in deps — avoids re-running when loadState itself changes.
   useEffect(() => {
@@ -702,7 +1107,10 @@ export default function OperationsPage() {
         const status = stages[stageName];
         if (status === "error") return { ...l, loadState: "error" as const };
         // "done" loadState is set by the fetch effect after data arrives
-        if (status === "done") return l;
+        if (status === "done") {
+          if (l.id === "terrain") return { ...l, loadState: "ready" as const, hasData: true };
+          return l;
+        }
         // pending / running / undefined → loading
         return { ...l, loadState: "loading" as const };
       })
@@ -720,6 +1128,7 @@ export default function OperationsPage() {
     for (const source of SOURCES) {
       const stageName = SOURCE_STAGE[source.id];
       if (!stageName) continue;
+      if (source.id === "terrain") continue;
       if (stages[stageName] !== "done") continue;
       if (loadedSources.current.has(source.id)) continue;
 
@@ -751,10 +1160,11 @@ export default function OperationsPage() {
   const infraEnabled = useMemo(() => new Set(Object.keys(INFRA_TO_SOURCE).filter(k => typeof INFRA_TO_SOURCE[k] !== "undefined")), []);
   const infraStatusById = useMemo(() => {
     const roads = layers.find((layer) => layer.id === "infra_roads");
+    const rail = layers.find((layer) => layer.id === "infra_rail");
     const towers = layers.find((layer) => layer.id === "cellular");
     return {
       roads: { loadState: roads?.loadState, hasData: roads?.hasData },
-      rail: { loadState: roads?.loadState, hasData: roads?.hasData },
+      rail: { loadState: rail?.loadState, hasData: rail?.hasData },
       towers: { loadState: towers?.loadState, hasData: towers?.hasData },
     };
   }, [layers]);
@@ -849,6 +1259,8 @@ export default function OperationsPage() {
       <TimeSlider
         forecastHorizonHours={missionConditions.lookaheadHours}
         windows={missionWindows}
+        selectedOffsetHours={timelineOffsetHours}
+        onOffsetChange={setTimelineOffsetHours}
         aoiCentroid={{
           lat: (aoi.minLat + aoi.maxLat) / 2,
           lon: (aoi.minLon + aoi.maxLon) / 2,
@@ -867,6 +1279,21 @@ export default function OperationsPage() {
         initial={missionConditions}
         onClose={() => setMissionWindowOpen(false)}
         onApply={onApplyMissionWindow}
+      />
+
+      <TrafficCameraModal
+        open={cameraStation !== null}
+        loading={cameraLoading}
+        error={cameraError}
+        stationId={cameraStation?.stationId ?? null}
+        stationName={cameraStation?.stationName ?? cameraDetail?.name ?? null}
+        detail={cameraDetail}
+        onClose={() => {
+          setCameraStation(null);
+          setCameraDetail(null);
+          setCameraLoading(false);
+          setCameraError(null);
+        }}
       />
     </div>
   );
@@ -928,6 +1355,53 @@ function buildPlaceholderWindows(cond: MissionConditionsUi): MissionWindowBand[]
 function clamp01(v: number): number {
   if (Number.isNaN(v)) return 0;
   return Math.max(0, Math.min(1, v));
+}
+
+function createTrafficCameraIcon(): ImageData {
+  const canvas = document.createElement("canvas");
+  canvas.width = 48;
+  canvas.height = 48;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return new ImageData(48, 48);
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "rgba(232, 98, 42, 0.18)";
+  ctx.beginPath();
+  ctx.arc(24, 24, 20, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#e8622a";
+  roundRect(ctx, 10, 16, 28, 18, 5);
+  ctx.fill();
+
+  ctx.fillStyle = "#1f1f1f";
+  roundRect(ctx, 16, 12, 10, 8, 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#f6f3ef";
+  ctx.beginPath();
+  ctx.arc(24, 25, 6, 0, Math.PI * 2);
+  ctx.fill();
+
+  return ctx.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + width, y, x + width, y + height, r);
+  ctx.arcTo(x + width, y + height, x, y + height, r);
+  ctx.arcTo(x, y + height, x, y, r);
+  ctx.arcTo(x, y, x + width, y, r);
+  ctx.closePath();
 }
 
 interface TopBarProps {

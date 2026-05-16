@@ -1,3 +1,5 @@
+import { formatViewerDateTimeInput } from "../utils/time";
+
 export interface IpbReportTemplateFields {
   reportTitle: string;
   missionName: string;
@@ -20,7 +22,7 @@ export const DEFAULT_IPB_TEMPLATE: IpbReportTemplateFields = {
   missionName: "Operation Name",
   analystName: "Analyst",
   unit: "Unit / Task Force",
-  datetime: new Date().toISOString().slice(0, 16).replace("T", " "),
+  datetime: formatViewerDateTimeInput(),
   areaSummary:
     "Describe AOI terrain, weather impacts, and notable movement constraints.",
   enemySituation:
