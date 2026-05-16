@@ -29,6 +29,7 @@ Schema (one row per grid-point × time-step):
 Proxy API: Open-Meteo (https://open-meteo.com) — EU-hosted, no key required
 """
 
+import asyncio
 import logging
 import math
 
@@ -41,20 +42,22 @@ from src.service._shared.storage import category_file, write_category_meta
 
 logger = logging.getLogger(__name__)
 
+# Serialise all Open-Meteo calls — their free tier 429s when multiple requests
+# hit at the same time from the same IP, even across different AOIs.
+_OPEN_METEO_SEMAPHORE = asyncio.Semaphore(1)
+
 _OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 # ~9 km spacing at Finnish latitudes (60°N): 0.08° lat ≈ 8.9 km, 0.16° lon ≈ 8.9 km.
-# At lower latitudes the lon spacing in km shrinks slightly — acceptable, the goal
-# is "as many readings from the AOI as possible" at ≈9 km, not exact spacing.
 _GRID_RES_LAT = 0.08
 _GRID_RES_LON = 0.16
 _MAX_POINTS = 100         # guard against very large bboxes
 
+# Operationally relevant parameters only — soil moisture/temperature, apparent
+# temperature, dewpoint, surface pressure, and shortwave radiation dropped.
 _HOURLY_PARAMS = [
     "precipitation",
-    "rain",
     "snowfall",
     "snow_depth",
-    "soil_moisture_0_to_1cm",
     "windspeed_10m",
     "winddirection_10m",
     "windgusts_10m",
@@ -67,40 +70,28 @@ _HOURLY_PARAMS = [
     "cloudcover_high",
     "weather_code",
     "temperature_2m",
-    "apparent_temperature",
     "relativehumidity_2m",
-    "dewpoint_2m",
-    "surface_pressure",
     "freezinglevel_height",
-    "soil_temperature_0_to_7cm",
-    "shortwave_radiation",
 ]
 
 _PARAM_RENAME: dict[str, str] = {
-    "windspeed_10m":             "wind_speed_ms",
-    "winddirection_10m":         "wind_dir_deg",
-    "windgusts_10m":             "wind_gust_ms",
-    "windspeed_120m":            "wind_speed_120m_ms",
-    "winddirection_120m":        "wind_dir_120m_deg",
-    "precipitation":             "precipitation_mm",
-    "rain":                      "rain_mm",
-    "snowfall":                  "snowfall_cm",
-    "snow_depth":                "snow_depth_m",
-    "soil_moisture_0_to_1cm":    "soil_moisture_m3m3",
-    "visibility":                "visibility_m",
-    "weather_code":              "weather_code",
-    "cloudcover":                "cloudcover_pct",
-    "cloudcover_low":            "cloudcover_low_pct",
-    "cloudcover_mid":            "cloudcover_mid_pct",
-    "cloudcover_high":           "cloudcover_high_pct",
-    "temperature_2m":            "temperature_c",
-    "apparent_temperature":      "apparent_temperature_c",
-    "relativehumidity_2m":       "humidity_pct",
-    "dewpoint_2m":               "dewpoint_c",
-    "surface_pressure":          "pressure_hpa",
-    "freezinglevel_height":      "freezing_level_m",
-    "soil_temperature_0_to_7cm": "soil_temperature_c",
-    "shortwave_radiation":       "shortwave_radiation_wm2",
+    "windspeed_10m":      "wind_speed_ms",
+    "winddirection_10m":  "wind_dir_deg",
+    "windgusts_10m":      "wind_gust_ms",
+    "windspeed_120m":     "wind_speed_120m_ms",
+    "winddirection_120m": "wind_dir_120m_deg",
+    "precipitation":      "precipitation_mm",
+    "snowfall":           "snowfall_cm",
+    "snow_depth":         "snow_depth_m",
+    "visibility":         "visibility_m",
+    "weather_code":       "weather_code",
+    "cloudcover":         "cloudcover_pct",
+    "cloudcover_low":     "cloudcover_low_pct",
+    "cloudcover_mid":     "cloudcover_mid_pct",
+    "cloudcover_high":    "cloudcover_high_pct",
+    "temperature_2m":     "temperature_c",
+    "relativehumidity_2m": "humidity_pct",
+    "freezinglevel_height": "freezing_level_m",
 }
 
 
@@ -146,7 +137,16 @@ async def fetch_weather(aoi_id: str, bbox: BBox) -> dict:
     }
 
     try:
-        resp = await client.get(_OPEN_METEO_URL, params=params)
+        async with _OPEN_METEO_SEMAPHORE:
+            # Retry up to 3 times on 429 with exponential backoff (2s, 4s, 8s).
+            resp = None
+            for attempt in range(3):
+                resp = await client.get(_OPEN_METEO_URL, params=params)
+                if resp.status_code != 429:
+                    break
+                wait = 2 ** (attempt + 1)
+                logger.warning("Open-Meteo 429 — retrying in %ds (attempt %d/3)", wait, attempt + 1)
+                await asyncio.sleep(wait)
         resp.raise_for_status()
         payload = resp.json()
 

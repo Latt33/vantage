@@ -37,6 +37,21 @@ def new_id() -> str:
     return str(uuid.uuid4())
 
 
+async def get_active_job_for_aoi(aoi_id: str) -> dict | None:
+    """Return the running/pending job for this AOI, or None if no active job exists."""
+    job_id = await _redis.get(f"aoi_job:{aoi_id}")
+    if not job_id:
+        return None
+    job = await get_job(job_id)
+    if job is None:
+        await _redis.delete(f"aoi_job:{aoi_id}")
+        return None
+    if job["status"] in ("pending", "running"):
+        return job
+    await _redis.delete(f"aoi_job:{aoi_id}")
+    return None
+
+
 async def create_job(job_id: str, aoi_id: str, stage_names: list[str]) -> None:
     job = {
         "job_id": job_id,
@@ -46,6 +61,7 @@ async def create_job(job_id: str, aoi_id: str, stage_names: list[str]) -> None:
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await _redis.set(f"job:{job_id}", json.dumps(job), ex=_JOB_TTL)
+    await _redis.set(f"aoi_job:{aoi_id}", job_id, ex=_JOB_TTL)
 
 
 async def get_job(job_id: str) -> dict | None:
@@ -59,6 +75,8 @@ async def set_job_status(job_id: str, status: str) -> None:
         return
     job["status"] = status
     await _redis.set(f"job:{job_id}", json.dumps(job), ex=_JOB_TTL)
+    if status in ("completed", "error"):
+        await _redis.delete(f"aoi_job:{job['aoi_id']}")
 
 
 async def set_stage_status(job_id: str, stage: str, status: str) -> None:

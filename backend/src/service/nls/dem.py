@@ -51,12 +51,12 @@ _MAX_WCS_PIXELS = 250_000  # NLS WCS rejects requests producing more pixels than
 _FETCH_BUFFER_METERS = 750.0
 
 _DEM_COLORS: list[tuple[int, int, int]] = [
-    (30, 58, 30),
-    (46, 92, 30),
-    (74, 128, 32),
-    (122, 168, 64),
-    (160, 184, 96),
-    (200, 200, 128),
+    (255, 255, 255),
+    (255, 210, 180),
+    (255, 160, 120),
+    (230,  90,  60),
+    (180,  30,  20),
+    (100,   0,   0),
 ]
 
 

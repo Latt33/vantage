@@ -246,6 +246,14 @@ export default function OperationsPage() {
     traffic_cameras: EMPTY_FC,
   });
 
+  const terrainElevRange = useMemo(() => {
+    const elevations = sourceData.terrain.features
+      .map((f) => (f.properties as Record<string, unknown> | null)?.elevation_m)
+      .filter((v): v is number => typeof v === "number" && isFinite(v));
+    if (elevations.length === 0) return null;
+    return { min: Math.round(Math.min(...elevations)), max: Math.round(Math.max(...elevations)) };
+  }, [sourceData.terrain]);
+
   const capabilityIds = useMemo(() => capabilities.map((c) => c.id), [capabilities]);
   const availableAnalyses = useMemo(() => analysesForCapabilities(capabilityIds), [capabilityIds]);
 
@@ -348,10 +356,8 @@ export default function OperationsPage() {
     };
   }, [cameraStation, jobInfo]);
 
-  // Mapping from infra node id -> source id in SOURCES (if implemented)
   const INFRA_TO_SOURCE: Record<string, string | undefined> = {
     roads: "infra_roads",
-    towers: "cellular",
   };
 
   function toggleInfra(id: string) {
@@ -1189,7 +1195,9 @@ export default function OperationsPage() {
         // "done" loadState is set by the fetch effect after data arrives
         if (status === "done") {
           if (l.id === "satellite_imagery") return { ...l, loadState: "ready" as const, hasData: true };
-          if (l.id === "terrain") return { ...l, loadState: "ready" as const, hasData: true };
+          if (l.id === "terrain")          return { ...l, loadState: "ready" as const, hasData: true };
+          if (l.id === "forest")           return { ...l, loadState: "ready" as const, hasData: true };
+          if (l.id === "landcover")        return { ...l, loadState: "ready" as const, hasData: true };
           return l;
         }
         // pending / running / undefined → loading
@@ -1241,10 +1249,8 @@ export default function OperationsPage() {
   const infraEnabled = useMemo(() => new Set(Object.keys(INFRA_TO_SOURCE).filter(k => typeof INFRA_TO_SOURCE[k] !== "undefined")), []);
   const infraStatusById = useMemo(() => {
     const roads = layers.find((layer) => layer.id === "infra_roads");
-    const towers = layers.find((layer) => layer.id === "cellular");
     return {
       roads: { loadState: roads?.loadState, hasData: roads?.hasData },
-      towers: { loadState: towers?.loadState, hasData: towers?.hasData },
     };
   }, [layers]);
 
@@ -1261,16 +1267,10 @@ export default function OperationsPage() {
     { title: "Surveillance",    layers: layers.filter((l) => SURV_IDS.includes(l.id) && l.id !== "cellular") },
   ];
 
-  // When infra selections change, toggle the corresponding source layers' visibility.
   useEffect(() => {
     setLayers((prev) =>
       prev.map((l) => {
-        if (l.id === "infra_roads") {
-          return { ...l, visible: infraSelected.has("roads") };
-        }
-        if (l.id === "cellular") {
-          return { ...l, visible: infraSelected.has("towers") };
-        }
+        if (l.id === "infra_roads") return { ...l, visible: infraSelected.has("roads") };
         return l;
       })
     );
@@ -1326,7 +1326,7 @@ export default function OperationsPage() {
 
         <div style={{ flex: 1, position: "relative" }}>
           <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
-          <MapLegend layers={layers} />
+          <MapLegend layers={layers} terrainElevRange={terrainElevRange} />
         </div>
 
         <LayerPanel
@@ -1482,10 +1482,11 @@ const LAND_LEGEND: { label: string; color: string }[] = [
   { label: "Rock",      color: "rgb(122, 122, 122)" },
 ];
 
-function MapLegend({ layers }: { layers: LayerConfig[] }) {
+function MapLegend({ layers, terrainElevRange }: { layers: LayerConfig[]; terrainElevRange: { min: number; max: number } | null }) {
   const landcoverOn = layers.some((l) => l.id === "landcover" && l.visible);
   const forestOn    = layers.some((l) => l.id === "forest"    && l.visible);
-  if (!landcoverOn && !forestOn) return null;
+  const terrainOn   = layers.some((l) => l.id === "terrain"   && l.visible);
+  if (!landcoverOn && !forestOn && !terrainOn) return null;
 
   return (
     <div
@@ -1518,6 +1519,24 @@ function MapLegend({ layers }: { layers: LayerConfig[] }) {
               <span>{label}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {terrainOn && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--color-text-dim)", marginBottom: 5 }}>
+            Elevation (m a.s.l.)
+          </div>
+          <div style={{
+            height: 10,
+            borderRadius: 3,
+            background: "linear-gradient(to right, rgb(255,255,255), rgb(255,160,120), rgb(180,30,20), rgb(100,0,0))",
+            marginBottom: 4,
+          }} />
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
+            <span>{terrainElevRange ? `${terrainElevRange.min} m` : "Low"}</span>
+            <span>{terrainElevRange ? `${terrainElevRange.max} m` : "High"}</span>
+          </div>
         </div>
       )}
 

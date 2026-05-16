@@ -4,12 +4,14 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from src.api.schemas import PrepareRequest
 from src.jobs.orchestrator import STAGE_NAMES, run_job
-from src.jobs.store import create_job, new_id
+from src.jobs.store import create_job, get_active_job_for_aoi, new_id
 from src.service._shared.bbox import BBox
 from src.service._shared.storage import (
     category_dir,
+    cleanup_old_aois,
     delete_aoi,
     create_aoi,
+    find_aoi_by_bbox,
     get_aoi_meta,
     list_aois,
 )
@@ -32,16 +34,31 @@ async def create_aoi_endpoint(
     req: PrepareRequest,
     background_tasks: BackgroundTasks,
 ) -> dict:
-    """Create a new AOI and queue a fetch job.
+    """Create or reuse an AOI and queue a fetch job.
 
-    Stale or missing categories are fetched in the background; fresh categories
-    are served immediately without network requests. Poll the returned
-    `job_id` via `GET /api/job/{job_id}/status`.
+    If an AOI with the exact same bbox already exists on disk its cached data
+    is reused — only stale or missing categories are re-fetched. Poll the
+    returned `job_id` via `GET /api/job/{job_id}/status`.
     """
-    aoi_id = new_id()
-    job_id = new_id()
+    bbox_dict = req.to_dict()
 
-    create_aoi(aoi_id, req.to_dict())
+    existing_aoi_id = find_aoi_by_bbox(bbox_dict)
+    if existing_aoi_id is not None:
+        aoi_id = existing_aoi_id
+    else:
+        aoi_id = new_id()
+        create_aoi(aoi_id, bbox_dict)
+        background_tasks.add_task(cleanup_old_aois, 30)
+
+    try:
+        active = await get_active_job_for_aoi(aoi_id)
+    except Exception:
+        raise HTTPException(status_code=503, detail="Job store unavailable (Redis)")
+
+    if active is not None:
+        return {"aoi_id": aoi_id, "job_id": active["job_id"]}
+
+    job_id = new_id()
     try:
         await create_job(job_id, aoi_id, STAGE_NAMES)
     except Exception:

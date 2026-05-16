@@ -1,15 +1,15 @@
 """Filesystem storage utilities for AoI data.
 
 All AoI data lives under DATA_ROOT/{aoi_id}/{category}/.
-Data is ephemeral — the directory is created at runtime and does not
-survive container restarts. No Docker volumes or bind mounts are used.
+Data persists across container restarts via the bind mount configured in
+docker-compose.yml (./data:/app/data).
 
 Path structure (current):
-    src/data/{aoi_id}/{category}/
+    data/{aoi_id}/{category}/
 
 The path is designed so a user namespace can be inserted later without
 changing anything below it:
-    src/data/{user_id}/{aoi_id}/{category}/
+    data/{user_id}/{aoi_id}/{category}/
 
 Nothing in this module knows about Redis or HTTP. It is pure filesystem I/O.
 """
@@ -30,14 +30,17 @@ DATA_ROOT: Path = Path(__file__).parent.parent.parent.parent / "data"
 # How long each category's data is considered fresh.
 # Staleness is checked by comparing fetched_at in meta.json against now.
 CATEGORY_TTL: dict[str, timedelta] = {
-    "weather":        timedelta(hours=6),
-    "water":          timedelta(days=7),
-    "land":           timedelta(days=7),
+    "weather":           timedelta(hours=12),
+    "water":             timedelta(days=7),
+    "land":              timedelta(days=7),
     "satellite_imagery": timedelta(days=7),
-    "infrastructure": timedelta(hours=24),
-    "mcoo":           timedelta(hours=24),
-    "derived":        timedelta(hours=24),
-    "traffic_cameras": timedelta(hours=1),
+    "infrastructure":    timedelta(hours=24),
+    "dem":               timedelta(days=7),
+    "satellites":        timedelta(hours=24),
+    "cellular":          timedelta(days=7),
+    "traffic_cameras":   timedelta(hours=1),
+    "mcoo":              timedelta(hours=24),
+    "derived":           timedelta(hours=24),
 }
 
 
@@ -108,17 +111,74 @@ def list_aois() -> list[dict]:
     """List all existing AOIs with their metadata."""
     if not DATA_ROOT.exists():
         return []
-        
+
     aois = []
     for d in DATA_ROOT.iterdir():
         if d.is_dir() and (d / "meta.json").exists():
             meta = read_json(d / "meta.json")
             if meta:
                 aois.append(meta)
-    
-    # Sort by created_at descending (newest first)
+
     aois.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return aois
+
+
+def find_aoi_by_bbox(bbox: dict) -> str | None:
+    """Return the aoi_id of an existing AOI whose bbox exactly matches, or None.
+
+    Compares all five bbox keys (min_lon, min_lat, max_lon, max_lat) to float
+    precision. Returns the most-recently created match so the freshest cached
+    data is preferred when duplicates exist.
+    """
+    if not DATA_ROOT.exists():
+        return None
+
+    keys = ("min_lon", "min_lat", "max_lon", "max_lat")
+    for d in sorted(DATA_ROOT.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        if not (d.is_dir() and (d / "meta.json").exists()):
+            continue
+        meta = read_json(d / "meta.json")
+        if not meta:
+            continue
+        stored = meta.get("bbox", {})
+        try:
+            if all(float(stored[k]) == float(bbox[k]) for k in keys):
+                return meta["aoi_id"]
+        except (KeyError, TypeError, ValueError):
+            continue
+    return None
+
+
+def cleanup_old_aois(max_age_days: int = 30) -> int:
+    """Delete AOI directories whose created_at is older than max_age_days.
+
+    Returns the number of directories removed. Errors on individual dirs are
+    logged and skipped so one corrupt entry never blocks the rest.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    if not DATA_ROOT.exists():
+        return 0
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+    removed = 0
+    for d in DATA_ROOT.iterdir():
+        if not (d.is_dir() and (d / "meta.json").exists()):
+            continue
+        meta = read_json(d / "meta.json")
+        if not meta:
+            continue
+        try:
+            created_at = datetime.fromisoformat(meta["created_at"])
+            if created_at < cutoff:
+                shutil.rmtree(d)
+                logger.info("cleanup_old_aois: removed %s (created %s)", d.name, meta["created_at"])
+                removed += 1
+        except (KeyError, ValueError, OSError) as exc:
+            logger.warning("cleanup_old_aois: skipped %s — %s", d.name, exc)
+
+    return removed
 
 
 # ---------------------------------------------------------------------------
