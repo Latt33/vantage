@@ -77,4 +77,18 @@ export const CAPABILITIES: Capability[] = [
       { id: "sightlines", label: "Sightlines", sublabel: "Terrain + weather derived" },
     ],
   },
+  {
+    id: "satellite_intelligence",
+    label: "Satellite Intel",
+    sublabel: "ISR · Overhead",
+    description: "Track overpasses and queue imagery from candidate satellites",
+    icon: "satellite",
+    derivedFilters: [
+      { id: "sentinel_2",  label: "Sentinel-2",  sublabel: "ESA · 10 m optical" },
+      { id: "sentinel_1",  label: "Sentinel-1",  sublabel: "ESA · C-band SAR" },
+      { id: "landsat_9",   label: "Landsat 9",   sublabel: "USGS · 30 m multispectral" },
+      { id: "iceye_x",     label: "ICEYE",       sublabel: "Commercial · X-band SAR" },
+      { id: "planet_skysat", label: "SkySat",    sublabel: "Planet · 0.5 m optical" },
+    ],
+  },
 ];

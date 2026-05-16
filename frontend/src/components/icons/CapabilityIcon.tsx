@@ -6,7 +6,8 @@ export type CapabilityIconName =
   | "artillery"
   | "logistics"
   | "drone"
-  | "fortification";
+  | "fortification"
+  | "satellite";
 
 interface Props extends Omit<SVGProps<SVGSVGElement>, "name"> {
   name: CapabilityIconName;
@@ -94,6 +95,22 @@ export default function CapabilityIcon({ name, size = 48, color = "currentColor"
           <line x1="14" y1="34" x2="14" y2="42" />
           <line x1="24" y1="34" x2="24" y2="42" />
           <line x1="34" y1="34" x2="34" y2="42" />
+        </svg>
+      );
+    case "satellite":
+      return (
+        <svg {...common}>
+          <rect x="20" y="20" width="8" height="8" />
+          <rect x="6" y="14" width="10" height="4" />
+          <rect x="6" y="30" width="10" height="4" />
+          <rect x="32" y="14" width="10" height="4" />
+          <rect x="32" y="30" width="10" height="4" />
+          <line x1="16" y1="16" x2="20" y2="22" />
+          <line x1="32" y1="22" x2="32" y2="16" />
+          <line x1="16" y1="32" x2="20" y2="26" />
+          <line x1="32" y1="26" x2="32" y2="32" />
+          <line x1="24" y1="20" x2="24" y2="8" />
+          <polyline points="20,8 24,4 28,8" />
         </svg>
       );
   }
