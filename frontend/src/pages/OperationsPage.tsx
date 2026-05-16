@@ -6,9 +6,11 @@ import { BoundingBox, LayerConfig, LayerId, LayerSection } from "../types";
 import { bboxToArea, setArea } from "../area";
 import { API_BASE_URL, MAPTILER_KEY } from "../config";
 import { CAPABILITIES, Capability } from "../data/capabilities";
+import { INFRASTRUCTURE } from "../data/infrastructure";
 import LayerPanel from "../components/LayerPanel";
 import TimeSlider from "../components/TimeSlider";
 import ToolPanel from "../components/ToolPanel";
+import ExportIpbReportModal, { ExportLegendState } from "../export/ExportIpbReportModal";
 import { SOURCES, loadSource } from "../sources";
 import { analysesForCapabilities } from "../analyses";
 
@@ -97,6 +99,22 @@ function bboxLabel(b: BoundingBox): string {
   return `${latStr} ${lonStr}`;
 }
 
+function flattenInfraLabels(): Record<string, string> {
+  const map: Record<string, string> = {};
+
+  const walk = (items: typeof INFRASTRUCTURE) => {
+    for (const item of items) {
+      map[item.id] = item.label;
+      if (item.children && item.children.length > 0) {
+        walk(item.children);
+      }
+    }
+  };
+
+  walk(INFRASTRUCTURE);
+  return map;
+}
+
 export default function OperationsPage() {
   const navigate = useNavigate();
   const aoi = useMemo(() => loadAoi(), []);
@@ -108,6 +126,9 @@ export default function OperationsPage() {
   const [layers, setLayers] = useState<LayerConfig[]>(INITIAL_LAYERS);
   const [analysisLayers, setAnalysisLayers] = useState<Record<string, { visible: boolean; opacity: number }>>({});
   const [infraSelected, setInfraSelected] = useState<Set<string>>(new Set());
+  const [derivedSelected, setDerivedSelected] = useState<Set<string>>(new Set());
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportShot, setExportShot] = useState<string | null>(null);
 
   const [jobInfo, setJobInfo] = useState<JobInfo | null>(null);
   const [stages, setStages] = useState<Record<string, string>>({});
@@ -121,6 +142,7 @@ export default function OperationsPage() {
 
   const capabilityIds = useMemo(() => capabilities.map((c) => c.id), [capabilities]);
   const availableAnalyses = useMemo(() => analysesForCapabilities(capabilityIds), [capabilityIds]);
+  const infraLabelById = useMemo(() => flattenInfraLabels(), []);
 
   const analysisLayerConfigs: LayerConfig[] = useMemo(
     () =>
@@ -156,8 +178,29 @@ export default function OperationsPage() {
     });
   }
 
-  function onExport(_kind: "report" | "pdf" | "notes") {
-    // Export wiring intentionally deferred for MVP.
+  function toggleDerived(id: string) {
+    setDerivedSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function onExport() {
+    const map = mapRef.current;
+    let screenshot: string | null = null;
+
+    if (map) {
+      try {
+        screenshot = map.getCanvas().toDataURL("image/png");
+      } catch {
+        screenshot = null;
+      }
+    }
+
+    setExportShot(screenshot);
+    setExportOpen(true);
   }
 
   function onLayerChange(id: LayerId, patch: Partial<LayerConfig>) {
@@ -260,6 +303,7 @@ export default function OperationsPage() {
       pitch: 0,
       bearing: 0,
       attributionControl: false,
+      preserveDrawingBuffer: true,
     });
 
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
@@ -439,13 +483,36 @@ export default function OperationsPage() {
   }
 
   const sections: LayerSection[] = [
-    { title: "Base Layers", layers: layers.filter((l) => BASE_IDS.includes(l.id)) },
-    { title: "Atmospheric", layers: layers.filter((l) => ATMOS_IDS.includes(l.id)) },
+    {
+      title: "Natural Filters",
+      layers: layers.filter((l) => BASE_IDS.includes(l.id) || ATMOS_IDS.includes(l.id)),
+    },
     { title: "Demographic", layers: layers.filter((l) => DEMO_IDS.includes(l.id)) },
-    ...(analysisLayerConfigs.length > 0 ? [{ title: "Analyses", layers: analysisLayerConfigs }] : []),
   ];
 
-  const activeCount = layers.filter((l) => l.visible).length + analysisLayerConfigs.filter((l) => l.visible).length;
+  const activeCount =
+    layers.filter((l) => l.visible).length +
+    infraSelected.size +
+    derivedSelected.size;
+
+  const exportLegends: ExportLegendState = useMemo(() => {
+    const naturalFilters = layers.filter((l) => l.visible).map((l) => l.label);
+    const infrastructureFilters = Array.from(infraSelected).map((id) => infraLabelById[id] ?? id);
+
+    const derivedLabelByKey: Record<string, string> = {};
+    for (const capability of capabilities) {
+      for (const filter of capability.derivedFilters) {
+        derivedLabelByKey[`${capability.id}:${filter.id}`] = `${capability.label}: ${filter.label}`;
+      }
+    }
+    const derivedFilters = Array.from(derivedSelected).map((id) => derivedLabelByKey[id] ?? id);
+
+    return {
+      naturalFilters,
+      infrastructureFilters,
+      derivedFilters,
+    };
+  }, [capabilities, derivedSelected, infraLabelById, infraSelected, layers]);
 
   if (!aoi) return null;
 
@@ -462,8 +529,8 @@ export default function OperationsPage() {
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
         <ToolPanel
           capabilities={capabilities}
-          infrastructureSelected={infraSelected}
-          onInfrastructureToggle={toggleInfra}
+          derivedSelected={derivedSelected}
+          onDerivedToggle={toggleDerived}
           onManageForces={() => navigate("/capabilities")}
           onExport={onExport}
         />
@@ -472,10 +539,22 @@ export default function OperationsPage() {
           <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
         </div>
 
-        <LayerPanel sections={sections} onChange={onLayerChange} />
+        <LayerPanel
+          sections={sections}
+          infrastructureSelected={infraSelected}
+          onInfrastructureToggle={toggleInfra}
+          onChange={onLayerChange}
+        />
       </div>
 
       <TimeSlider />
+
+      <ExportIpbReportModal
+        open={exportOpen}
+        screenshotDataUrl={exportShot}
+        legends={exportLegends}
+        onClose={() => setExportOpen(false)}
+      />
     </div>
   );
 }

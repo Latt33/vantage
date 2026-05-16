@@ -1,20 +1,19 @@
 import { useState } from "react";
 import { Capability } from "../data/capabilities";
-import { INFRASTRUCTURE, InfraNode } from "../data/infrastructure";
 import CapabilityIcon from "./icons/CapabilityIcon";
 
 interface ToolPanelProps {
   capabilities: Capability[];
-  infrastructureSelected: Set<string>;
-  onInfrastructureToggle: (id: string) => void;
+  derivedSelected: Set<string>;
+  onDerivedToggle: (id: string) => void;
   onManageForces: () => void;
-  onExport: (kind: "report" | "pdf" | "notes") => void;
+  onExport: () => void;
 }
 
 export default function ToolPanel({
   capabilities,
-  infrastructureSelected,
-  onInfrastructureToggle,
+  derivedSelected,
+  onDerivedToggle,
   onManageForces,
   onExport,
 }: ToolPanelProps) {
@@ -37,23 +36,20 @@ export default function ToolPanel({
         {capabilities.length === 0 ? (
           <EmptyState text="No forces selected" />
         ) : (
-          capabilities.map(c => <ForceRow key={c.id} capability={c} />)
+          capabilities.map(c => (
+            <ForceRow
+              key={c.id}
+              capability={c}
+              derivedSelected={derivedSelected}
+              onDerivedToggle={onDerivedToggle}
+            />
+          ))
         )}
         <div style={{ padding: "8px 12px 12px 12px" }}>
           <button className="btn" style={{ width: "100%" }} onClick={onManageForces}>
             ⤺ Manage Forces
           </button>
         </div>
-
-        <SectionHeader title="Infrastructure" />
-        {INFRASTRUCTURE.map(node => (
-          <InfraRow
-            key={node.id}
-            node={node}
-            selected={infrastructureSelected}
-            onToggle={onInfrastructureToggle}
-          />
-        ))}
       </div>
 
       <div
@@ -80,9 +76,7 @@ export default function ToolPanel({
         >
           Export
         </div>
-        <ExportButton icon="▣" label="Generate IPB Report" onClick={() => onExport("report")} />
-        <ExportButton icon="⤓" label="Export PDF" onClick={() => onExport("pdf")} />
-        <ExportButton icon="✎" label="Add Notes" onClick={() => onExport("notes")} />
+        <ExportButton icon="⤓" label="Export IPB Report" onClick={onExport} />
       </div>
     </div>
   );
@@ -151,141 +145,146 @@ function EmptyState({ text }: { text: string }) {
   );
 }
 
-function ForceRow({ capability }: { capability: Capability }) {
+interface ForceRowProps {
+  capability: Capability;
+  derivedSelected: Set<string>;
+  onDerivedToggle: (id: string) => void;
+}
+
+function ForceRow({ capability, derivedSelected, onDerivedToggle }: ForceRowProps) {
+  const [expanded, setExpanded] = useState(true);
+  const hasDerived = capability.derivedFilters.length > 0;
+
   return (
     <div
       style={{
         display: "flex",
-        gap: 10,
+        flexDirection: "column",
+        gap: 8,
         padding: "10px 12px",
         borderBottom: "1px solid var(--color-border-subtle)",
       }}
     >
-      <div
-        style={{
-          flexShrink: 0,
-          width: 28,
-          height: 28,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          border: "1px solid var(--color-border-default)",
-        }}
-      >
-        <CapabilityIcon name={capability.icon} size={20} color="var(--color-accent-teal)" />
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ display: "flex", gap: 10 }}>
         <div
           style={{
-            fontFamily: "var(--font-ui)",
-            fontSize: 13,
-            color: "var(--color-text-primary)",
-            lineHeight: 1.1,
+            flexShrink: 0,
+            width: 28,
+            height: 28,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            border: "1px solid var(--color-border-default)",
           }}
         >
-          {capability.label}
+          <CapabilityIcon name={capability.icon} size={20} color="var(--color-accent-teal)" />
         </div>
-        <div
-          style={{
-            fontFamily: "var(--font-data)",
-            fontSize: 10,
-            color: "var(--color-text-secondary)",
-            marginTop: 2,
-          }}
-        >
-          {capability.sublabel}
-        </div>
-        <div
-          style={{
-            fontFamily: "var(--font-ui)",
-            fontSize: 11,
-            fontWeight: 300,
-            color: "var(--color-text-secondary)",
-            marginTop: 6,
-            lineHeight: 1.35,
-          }}
-        >
-          {capability.description}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-interface InfraRowProps {
-  node: InfraNode;
-  selected: Set<string>;
-  onToggle: (id: string) => void;
-  depth?: number;
-}
-
-function InfraRow({ node, selected, onToggle, depth = 0 }: InfraRowProps) {
-  const [expanded, setExpanded] = useState(false);
-  const hasChildren = !!node.children && node.children.length > 0;
-
-  return (
-    <div>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: depth === 0 ? "6px 12px" : "4px 12px 4px 36px",
-          borderBottom: depth === 0 ? "1px solid var(--color-border-subtle)" : "none",
-        }}
-      >
-        <input
-          type="checkbox"
-          className="toggle"
-          checked={selected.has(node.id)}
-          onChange={() => onToggle(node.id)}
-        />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
               fontFamily: "var(--font-ui)",
-              fontSize: depth === 0 ? 13 : 12,
+              fontSize: 13,
               color: "var(--color-text-primary)",
               lineHeight: 1.1,
             }}
           >
-            {node.label}
+            {capability.label}
           </div>
-          {node.sublabel && (
-            <div
-              style={{
-                fontFamily: "var(--font-data)",
-                fontSize: 10,
-                color: "var(--color-text-secondary)",
-                marginTop: 2,
-              }}
-            >
-              {node.sublabel}
-            </div>
-          )}
+          <div
+            style={{
+              fontFamily: "var(--font-data)",
+              fontSize: 10,
+              color: "var(--color-text-secondary)",
+              marginTop: 2,
+            }}
+          >
+            {capability.sublabel}
+          </div>
+          <div
+            style={{
+              fontFamily: "var(--font-ui)",
+              fontSize: 11,
+              fontWeight: 300,
+              color: "var(--color-text-secondary)",
+              marginTop: 6,
+              lineHeight: 1.35,
+            }}
+          >
+            {capability.description}
+          </div>
         </div>
-        {hasChildren && (
+      </div>
+
+      {hasDerived && (
+        <div style={{ marginLeft: 38, display: "flex", flexDirection: "column", gap: 4 }}>
           <button
             type="button"
             onClick={() => setExpanded(e => !e)}
             style={{
               background: "none",
               border: "none",
-              padding: "0 4px",
               color: "var(--color-text-secondary)",
               cursor: "pointer",
-              fontFamily: "var(--font-data)",
-              fontSize: 12,
+              fontFamily: "var(--font-heading)",
+              fontSize: 10,
+              fontWeight: 600,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              padding: 0,
+              textAlign: "left",
             }}
-            aria-label={expanded ? "Collapse" : "Expand"}
+            aria-label={expanded ? "Collapse derived filters" : "Expand derived filters"}
           >
-            {expanded ? "▾" : "▸"}
+            {expanded ? "▾" : "▸"} Derived Filters
           </button>
-        )}
-      </div>
-      {expanded && hasChildren && node.children!.map(child => (
-        <InfraRow key={child.id} node={child} selected={selected} onToggle={onToggle} depth={depth + 1} />
-      ))}
+
+          {expanded && capability.derivedFilters.map(filter => (
+            <label
+              key={`${capability.id}:${filter.id}`}
+              style={{
+                minHeight: 24,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                className="toggle"
+                checked={derivedSelected.has(`${capability.id}:${filter.id}`)}
+                onChange={() => onDerivedToggle(`${capability.id}:${filter.id}`)}
+              />
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span
+                  style={{
+                    display: "block",
+                    fontFamily: "var(--font-ui)",
+                    fontSize: 12,
+                    color: "var(--color-text-primary)",
+                    lineHeight: 1.15,
+                  }}
+                >
+                  {filter.label}
+                </span>
+                {filter.sublabel && (
+                  <span
+                    style={{
+                      display: "block",
+                      marginTop: 1,
+                      fontFamily: "var(--font-data)",
+                      fontSize: 10,
+                      color: "var(--color-text-secondary)",
+                    }}
+                  >
+                    {filter.sublabel}
+                  </span>
+                )}
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

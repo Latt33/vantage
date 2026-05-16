@@ -4,6 +4,27 @@ Base URL: `http://localhost:8000`
 
 This document lists the frontend-facing HTTP contract. Payload schemas are intentionally concise.
 
+## Testing In Swagger UI
+
+1. Start backend + Redis:
+  - `cd backend`
+  - `docker compose up --build backend redis`
+2. Open Swagger UI:
+  - `http://localhost:8000/docs`
+3. Run `POST /api/aoi` with a bbox (example from this file) and copy `aoi_id` + `job_id`.
+4. Run `GET /api/job/{job_id}/status` until `status` is `completed` (or the needed stage is `done`).
+5. Run typed reads such as:
+  - `GET /api/aoi/{aoi_id}/weather/forecast`
+  - `GET /api/aoi/{aoi_id}/water/bodies`
+  - `GET /api/aoi/{aoi_id}/land/cover`
+6. Optional metadata checks:
+  - `GET /api/aoi/{aoi_id}/layers`
+  - `GET /health`
+
+Notes:
+- OpenAPI JSON is available at `http://localhost:8000/openapi.json`.
+- If `POST /api/aoi` fails with job-store errors, ensure Redis is running.
+
 ## Lifecycle
 
 1. `POST /api/aoi` to create an AOI and enqueue a job.
