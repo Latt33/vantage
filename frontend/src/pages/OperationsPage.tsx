@@ -11,6 +11,11 @@ import TimeSlider from "../components/TimeSlider";
 import ToolPanel from "../components/ToolPanel";
 import { SOURCES } from "../sources";
 import { analysesForCapabilities } from "../analyses";
+import cameraIconUrl from "../assets/camera-icon.svg";
+
+const EMPTY_FC: FeatureCollection = { type: "FeatureCollection", features: [] };
+const CAMERA_SOURCE = "traffic-cameras-source";
+const CAMERA_LAYER = "traffic-cameras-layer";
 
 const SOURCE_ACCENTS: Record<string, string> = {
   terrain:    "#8a7a5a",
@@ -65,6 +70,8 @@ export default function OperationsPage() {
   const [layers, setLayers] = useState<LayerConfig[]>(INITIAL_LAYERS);
   const [analysisLayers, setAnalysisLayers] = useState<Record<string, { visible: boolean; opacity: number }>>({});
   const [infraSelected, setInfraSelected] = useState<Set<string>>(new Set());
+  const [jobInfo, setJobInfo] = useState<{ aoiId: string; jobId: string } | null>(null);
+  const [cameraData, setCameraData] = useState<FeatureCollection>(EMPTY_FC);
 
   const capabilityIds = useMemo(() => capabilities.map(c => c.id), [capabilities]);
   const availableAnalyses = useMemo(() => analysesForCapabilities(capabilityIds), [capabilityIds]);
@@ -144,9 +151,9 @@ export default function OperationsPage() {
       });
 
       map.addSource(CAMERA_SOURCE, { type: "geojson", data: EMPTY_FC });
-      map.loadImage(cameraIconUrl, (error, image) => {
-        if (error || !image || map.hasImage("traffic-camera-icon")) return;
-        map.addImage("traffic-camera-icon", image, { sdf: false });
+      map.loadImage(cameraIconUrl).then((image) => {
+        if (!image || !image.data || map.hasImage("traffic-camera-icon")) return;
+        map.addImage("traffic-camera-icon", image.data, { sdf: false });
         map.addLayer({
           id: CAMERA_LAYER,
           type: "symbol",
@@ -171,7 +178,7 @@ export default function OperationsPage() {
           const url = feature?.properties?.image_url as string | undefined;
           if (url) window.open(url, "_blank", "noopener");
         });
-      });
+      }).catch(() => {});
       setMapReady(true);
     });
 
@@ -209,10 +216,10 @@ export default function OperationsPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            min_lon: aoi.minLon,
-            min_lat: aoi.minLat,
-            max_lon: aoi.maxLon,
-            max_lat: aoi.maxLat,
+            min_lon: aoi!.minLon,
+            min_lat: aoi!.minLat,
+            max_lon: aoi!.maxLon,
+            max_lat: aoi!.maxLat,
           }),
           signal: controller.signal,
         });
@@ -236,12 +243,12 @@ export default function OperationsPage() {
 
     async function pollStatus() {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/job/${jobInfo.jobId}/status`);
+        const res = await fetch(`${API_BASE_URL}/api/job/${jobInfo!.jobId}/status`);
         if (!res.ok) return;
         const payload = await res.json();
         const stage = payload?.stages?.traffic_cameras;
         if (stage === "done") {
-          await loadCameraLayer(jobInfo.aoiId);
+          await loadCameraLayer(jobInfo!.aoiId);
           if (timer) window.clearInterval(timer);
         }
       } catch {

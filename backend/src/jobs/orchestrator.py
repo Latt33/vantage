@@ -29,7 +29,8 @@ from src.service.ecmwf.weather import fetch_weather
 from src.service.nls.dem import fetch_dem
 from src.service.nls.land import fetch_land
 from src.service.nls.water import fetch_water
-from src.service.nls.infra import fetch_infra
+from src.service.osm.infra import fetch_infrastructure
+from src.service.opencellid.towers import fetch_towers
 from src.service.n2yo.satellite import fetch_satellites
 from src.service.analysis.mcoo import build_mcoo
 from src.service.digitraffic.weathercam import fetch_weathercam
@@ -41,7 +42,8 @@ FETCH_STAGES: list[tuple[str, object]] = [
     ("weather",         fetch_weather),
     ("water",           fetch_water),
     ("land",            fetch_land),
-    ("infrastructure",  fetch_infra),
+    ("infrastructure",  fetch_infrastructure),
+    ("cellular",        fetch_towers),
     ("dem",             fetch_dem),
     ("satellites",      fetch_satellites),
     ("traffic_cameras", fetch_weathercam),
