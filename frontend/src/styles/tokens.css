@@ -111,6 +111,46 @@ html, body, #root {
   border-color: var(--color-accent-orange);
 }
 
+/* Time slider — full-width range with NOW-centred orange thumb */
+.time-slider {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 2px;
+  background: linear-gradient(
+    to right,
+    var(--color-border-default) 0%,
+    var(--color-border-default) 50%,
+    rgba(42, 109, 181, 0.4) 50%,
+    rgba(42, 109, 181, 0.4) 100%
+  );
+  outline: none;
+}
+
+.time-slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 8px;
+  height: 14px;
+  background: var(--color-accent-orange);
+  cursor: pointer;
+  border: none;
+}
+
+.time-slider::-moz-range-thumb {
+  width: 8px;
+  height: 14px;
+  background: var(--color-accent-orange);
+  cursor: pointer;
+  border: none;
+  border-radius: 0;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  color: var(--color-text-dim);
+  border-color: var(--color-border-subtle);
+}
+
 /* Opacity slider */
 .opacity-slider {
   appearance: none;
