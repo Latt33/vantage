@@ -30,6 +30,7 @@ from src.service.nls.dem import fetch_dem
 from src.service.nls.land import fetch_land
 from src.service.nls.water import fetch_water
 from src.service.nls.infra import fetch_infra
+from src.service.n2yo.satellite import fetch_satellites
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ STAGES: list[tuple[str, object]] = [
     ("land",           fetch_land),
     ("infrastructure", fetch_infra),
     ("dem",            fetch_dem),
+    ("satellites",     fetch_satellites),
 ]
 
 STAGE_NAMES: list[str] = [name for name, _ in STAGES]

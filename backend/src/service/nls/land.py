@@ -4,7 +4,8 @@ Fetches land cover (forest, open land, built areas) from the NLS OGC
 Features API and writes it as a GeoJSON file.
 
 Output files:
-    {aoi_id}/land/cover.geojson   — NLS 'maanpeite' collection
+    {aoi_id}/land/cover.geojson      — NLS 'maanpeite' collection
+    {aoi_id}/land/buildings.geojson  — NLS 'rakennukset' collection
     {aoi_id}/land/meta.json
 
 Source:  https://www.maanmittauslaitos.fi/en
@@ -51,14 +52,28 @@ async def fetch_land(aoi_id: str, bbox: BBox) -> dict:
     except Exception as exc:
         logger.warning("NLS land error: %s", exc)
 
+    # 2. Fetch Buildings
+    bldg_url = f"{_NLS_BASE}/collections/rakennukset/items"
+    buildings: list[dict] = []
+    try:
+        bldg_resp = await client.get(bldg_url, params=params, auth=auth)
+        if bldg_resp.status_code == 200:
+            buildings = bldg_resp.json().get("features", [])
+    except Exception as exc:
+        logger.warning("NLS buildings error: %s", exc)
+
     fc = feature_collection(features, source="NLS Finland — Topographic Database")
     write_json(category_file(aoi_id, "land", "cover.geojson"), fc)
-    logger.info("NLS land: %d features → cover.geojson", len(features))
+
+    fc_bldg = feature_collection(buildings, source="NLS Finland — Topographic Database")
+    write_json(category_file(aoi_id, "land", "buildings.geojson"), fc_bldg)
+
+    logger.info("NLS land: %d cover features, %d buildings → land/", len(features), len(buildings))
 
     write_category_meta(
         aoi_id, "land",
         source="NLS Finland — Topographic Database",
-        confidence="high" if features else "low",
-        feature_counts={"cover.geojson": len(features)},
+        confidence="high" if features or buildings else "low",
+        feature_counts={"cover.geojson": len(features), "buildings.geojson": len(buildings)},
     )
-    return {"source": "NLS Finland — Topographic Database", "feature_counts": {"cover.geojson": len(features)}}
+    return {"source": "NLS Finland", "feature_counts": {"cover": len(features), "buildings": len(buildings)}}
