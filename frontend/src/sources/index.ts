@@ -209,7 +209,8 @@ async function loadWeather(area: AreaContext, signal?: AbortSignal): Promise<Fea
   const fc = asFeatureCollection(raw);
 
   // Parquet has one row per (grid-point × time-step). Keep only the earliest
-  // valid_time so each grid point appears once on the initial map display.
+  // valid_time so each grid point appears once. Stay as Point features —
+  // the map renders one wind-arrow per point, not a polygon grid.
   const times = [
     ...new Set(
       fc.features
@@ -220,12 +221,10 @@ async function loadWeather(area: AreaContext, signal?: AbortSignal): Promise<Fea
   const firstTime = times[0];
   if (!firstTime) return fc;
 
-  const filtered = {
+  return {
     ...fc,
     features: fc.features.filter((f) => f.properties?.valid_time === firstTime),
   };
-
-  return gridPointsToCells(filtered);
 }
 
 // ── Infrastructure ────────────────────────────────────────────────────────────

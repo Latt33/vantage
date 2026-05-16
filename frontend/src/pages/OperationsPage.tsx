@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import maplibregl from "maplibre-gl";
 import type { FeatureCollection } from "geojson";
-import { BoundingBox, LayerConfig, LayerId, LayerSection, WeatherMetricId } from "../types";
+import { BoundingBox, LayerConfig, LayerId, LayerSection, WeatherAverages } from "../types";
 import { bboxToArea, setArea } from "../area";
 import { API_BASE_URL, MAPTILER_KEY } from "../config";
 import { CAPABILITIES, Capability } from "../data/capabilities";
@@ -63,44 +63,34 @@ const MAP_LAYER_IDS: Record<string, string[]> = {
   landcover:   ["natural-landcover-fill", "natural-landcover-line", "natural-landcover-label"],
   forest:      ["natural-forest-fill"],
   water:       ["natural-water-fill", "natural-water-line"],
-  weather:     ["natural-weather-cloud-amount", "natural-weather-cloud-height", "natural-weather-visibility", "natural-weather-temperature", "natural-weather-wind-speed"],
+  weather:     ["natural-weather-wind-arrows"],
   terrain:     ["dem-terrain-fill"],
   infra_roads: ["infra-roads-line"],
   cellular:    ["cellular-circle"],
   satellites:  ["satellites-circle"],
 };
 
-const MAP_LAYER_OPACITY_PROP: Record<string, "fill-opacity" | "line-opacity" | "circle-opacity" | "heatmap-opacity"> = {
+const MAP_LAYER_OPACITY_PROP: Record<string, "fill-opacity" | "line-opacity" | "circle-opacity" | "icon-opacity" | "text-opacity"> = {
   "natural-landcover-fill": "fill-opacity",
   "natural-landcover-line": "line-opacity",
   "natural-forest-fill":    "fill-opacity",
   "natural-water-fill":     "fill-opacity",
   "natural-water-line":     "line-opacity",
-  "natural-weather-cloud-amount":   "fill-opacity",
-  "natural-weather-cloud-height":    "fill-opacity",
-  "natural-weather-visibility":      "fill-opacity",
-  "natural-weather-temperature":     "fill-opacity",
-  "natural-weather-wind-speed":      "fill-opacity",
+  "natural-weather-wind-arrows": "text-opacity",
   "dem-terrain-fill":       "fill-opacity",
   "infra-roads-line":       "line-opacity",
   "cellular-circle":        "circle-opacity",
   "satellites-circle":      "circle-opacity",
 };
 
-const DEFAULT_WEATHER_METRICS: Record<WeatherMetricId, boolean> = {
-  cloudAmount: false,
-  cloudHeight: false,
-  visibility: false,
-  temperature: false,
-  windSpeed: true,
-};
-
-const WEATHER_METRIC_LAYER_IDS: Record<WeatherMetricId, string> = {
-  cloudAmount: "natural-weather-cloud-amount",
-  cloudHeight: "natural-weather-cloud-height",
-  visibility: "natural-weather-visibility",
-  temperature: "natural-weather-temperature",
-  windSpeed: "natural-weather-wind-speed",
+const EMPTY_WEATHER_AVERAGES: WeatherAverages = {
+  windSpeed: null,
+  windDir: null,
+  windGust: null,
+  temperature: null,
+  cloudAmount: null,
+  cloudHeight: null,
+  visibility: null,
 };
 
 // Maps each source id to its backend job stage name
@@ -155,7 +145,6 @@ export default function OperationsPage() {
   const [mapReady, setMapReady] = useState(false);
   const [layers, setLayers] = useState<LayerConfig[]>(INITIAL_LAYERS);
   const [analysisLayers, setAnalysisLayers] = useState<Record<string, { visible: boolean; opacity: number }>>({});
-  const [weatherMetrics, setWeatherMetrics] = useState<Record<WeatherMetricId, boolean>>(DEFAULT_WEATHER_METRICS);
   const [infraSelected, setInfraSelected] = useState<Set<string>>(new Set());
   const [derivedSelected, setDerivedSelected] = useState<Set<string>>(new Set());
   const [exportOpen, setExportOpen] = useState(false);
@@ -247,10 +236,6 @@ export default function OperationsPage() {
 
       return next;
     });
-  }
-
-  function toggleWeatherMetric(id: WeatherMetricId) {
-    setWeatherMetrics((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
   function onExport() {
@@ -390,6 +375,10 @@ export default function OperationsPage() {
     });
 
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
+    map.addControl(
+      new maplibregl.NavigationControl({ showCompass: true, showZoom: false, visualizePitch: false }),
+      "top-right",
+    );
 
     map.on("load", () => {
       // AOI boundary
@@ -516,49 +505,47 @@ export default function OperationsPage() {
       });
 
       // ── Atmospheric ───────────────────────────────────────────────────────
+      // Single visual: an arrow at every grid point, rotated by wind direction
+      // (meteorological "from" angle + 180° → arrow points in flow direction)
+      // and sized by wind speed. AoI-wide metric averages live in the side panel.
       map.addSource(MAP_SOURCE_IDS.weather, { type: "geojson", data: EMPTY_FC });
-      const weatherLayerDefs: Array<{ id: string; property: string; colorStops: [number, string][] }> = [
-        {
-          id: "natural-weather-cloud-amount",
-          property: "cloudcover_pct",
-          colorStops: [[0.0, "#1e3a5f"], [0.25, "#4c78a8"], [0.55, "#91a7c0"], [0.8, "#d0d7df"], [1, "#f5f7fa"]],
+      map.addLayer({
+        id: "natural-weather-wind-arrows",
+        type: "symbol",
+        source: MAP_SOURCE_IDS.weather,
+        layout: {
+          visibility: "none",
+          "text-field": "↑",
+          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+          "text-size": [
+            "interpolate", ["linear"], ["coalesce", ["get", "wind_speed_ms"], 0],
+            0, 16,
+            5, 22,
+            15, 32,
+            25, 40,
+          ],
+          "text-rotate": [
+            "%",
+            ["+", ["coalesce", ["get", "wind_dir_deg"], 0], 180],
+            360,
+          ],
+          "text-rotation-alignment": "map",
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
         },
-        {
-          id: "natural-weather-cloud-height",
-          property: "cloudcover_high_pct",
-          colorStops: [[0.0, "#2c7a7b"], [0.25, "#3f8e8f"], [0.55, "#7aa89b"], [0.8, "#c5d6bf"], [1, "#f0f4e8"]],
+        paint: {
+          "text-color": [
+            "interpolate", ["linear"], ["coalesce", ["get", "wind_speed_ms"], 0],
+            0,  "#9ec6f0",
+            8,  "#f1c40f",
+            16, "#e67e22",
+            25, "#c0392b",
+          ],
+          "text-halo-color": "rgba(0,0,0,0.85)",
+          "text-halo-width": 1.5,
+          "text-opacity": 0.92,
         },
-        {
-          id: "natural-weather-visibility",
-          property: "visibility_m",
-          colorStops: [[0.0, "#c0392b"], [0.25, "#d35400"], [0.55, "#f1c40f"], [0.85, "#2ecc71"], [1, "#1e8449"]],
-        },
-        {
-          id: "natural-weather-temperature",
-          property: "temperature_c",
-          colorStops: [[0.0, "#143d59"], [0.25, "#2a6db5"], [0.5, "#f1c40f"], [0.75, "#e67e22"], [1, "#c0392b"]],
-        },
-        {
-          id: "natural-weather-wind-speed",
-          property: "wind_speed_ms",
-          colorStops: [[0.0, "#2a6db5"], [0.55, "#d4a017"], [1, "#c0392b"]],
-        },
-      ] as const;
-
-      for (const def of weatherLayerDefs) {
-        map.addLayer({
-          id: def.id,
-          type: "fill",
-          source: MAP_SOURCE_IDS.weather,
-          layout: { visibility: "none" },
-          paint: {
-            "fill-color": ["interpolate", ["linear"], ["coalesce", ["get", def.property], 0], ...def.colorStops.flatMap(([a, b]) => [a, b])],
-            "fill-opacity": 0.72,
-            "fill-outline-color": "rgba(0,0,0,0.12)",
-          },
-        });
-      }
-
+      });
 
       // ── Infrastructure ────────────────────────────────────────────────────
       map.addSource(MAP_SOURCE_IDS.infra_roads, { type: "geojson", data: EMPTY_FC });
@@ -656,7 +643,6 @@ export default function OperationsPage() {
     if (!map) return;
 
     for (const layer of layers) {
-      if (layer.id === "weather") continue;
       const mapLayerIds = MAP_LAYER_IDS[layer.id] ?? [];
       for (const mapLayerId of mapLayerIds) {
         if (!map.getLayer(mapLayerId)) continue;
@@ -675,22 +661,66 @@ export default function OperationsPage() {
     }
   }, [layers, mapReady]);
 
-  useEffect(() => {
-    if (!mapReady) return;
-    const map = mapRef.current;
-    if (!map) return;
+  // Compute AoI-wide weather averages from the loaded grid points.
+  // The map already shows per-point wind arrows; the panel shows one
+  // averaged value per metric so the operator gets a single summary number.
+  const weatherAverages = useMemo<WeatherAverages>(() => {
+    const features = sourceData.weather?.features ?? [];
+    if (features.length === 0) return EMPTY_WEATHER_AVERAGES;
 
-    const weatherLayer = layers.find((layer) => layer.id === "weather");
-    const weatherVisible = weatherLayer?.visible ?? false;
-
-    for (const metricId of Object.keys(WEATHER_METRIC_LAYER_IDS) as WeatherMetricId[]) {
-      const mapLayerId = WEATHER_METRIC_LAYER_IDS[metricId];
-      if (!map.getLayer(mapLayerId)) continue;
-      const visible = weatherVisible && weatherMetrics[metricId];
-      map.setLayoutProperty(mapLayerId, "visibility", visible ? "visible" : "none");
-      console.info(`[map] weather metric ${metricId} visibility=${visible}`);
+    const collect: Record<string, number[]> = {};
+    for (const f of features) {
+      const p = (f.properties ?? {}) as Record<string, unknown>;
+      for (const key of [
+        "wind_speed_ms",
+        "wind_gust_ms",
+        "temperature_c",
+        "cloudcover_pct",
+        "cloudcover_high_pct",
+        "visibility_m",
+      ]) {
+        const v = p[key];
+        if (typeof v === "number" && Number.isFinite(v)) {
+          (collect[key] ??= []).push(v);
+        }
+      }
     }
-  }, [layers, weatherMetrics, mapReady]);
+
+    const dirs: number[] = [];
+    for (const f of features) {
+      const p = (f.properties ?? {}) as Record<string, unknown>;
+      const v = p.wind_dir_deg;
+      if (typeof v === "number" && Number.isFinite(v)) dirs.push(v);
+    }
+
+    const linMean = (arr?: number[]): number | null =>
+      arr && arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+
+    // Wind direction needs a circular mean — linear averaging of 350° and 10°
+    // would wrongly give 180°.
+    function circularMeanDeg(angles: number[]): number | null {
+      if (!angles.length) return null;
+      let sumSin = 0;
+      let sumCos = 0;
+      for (const a of angles) {
+        const r = (a * Math.PI) / 180;
+        sumSin += Math.sin(r);
+        sumCos += Math.cos(r);
+      }
+      const mean = Math.atan2(sumSin / angles.length, sumCos / angles.length);
+      return ((mean * 180) / Math.PI + 360) % 360;
+    }
+
+    return {
+      windSpeed:   linMean(collect.wind_speed_ms),
+      windDir:     circularMeanDeg(dirs),
+      windGust:    linMean(collect.wind_gust_ms),
+      temperature: linMean(collect.temperature_c),
+      cloudAmount: linMean(collect.cloudcover_pct),
+      cloudHeight: linMean(collect.cloudcover_high_pct),
+      visibility:  linMean(collect.visibility_m),
+    };
+  }, [sourceData.weather]);
 
   // Sync loadState badges with backend stage status.
   // Does NOT include `layers` in deps — avoids re-running when loadState itself changes.
@@ -762,7 +792,11 @@ export default function OperationsPage() {
   const sections: LayerSection[] = [
     {
       title: "Natural Filters",
-      layers: layers.filter((l) => BASE_IDS.includes(l.id) || ATMOS_IDS.includes(l.id)),
+      layers: layers.filter((l) => BASE_IDS.includes(l.id)),
+    },
+    {
+      title: "Weather",
+      layers: layers.filter((l) => ATMOS_IDS.includes(l.id)),
     },
     { title: "Demographic",     layers: layers.filter((l) => DEMO_IDS.includes(l.id)) },
     { title: "Surveillance",    layers: layers.filter((l) => SURV_IDS.includes(l.id) && l.id !== "cellular") },
@@ -838,8 +872,7 @@ export default function OperationsPage() {
           infrastructureSelected={infraSelected}
           infraEnabled={infraEnabled}
           infraStatusById={infraStatusById}
-          weatherMetrics={weatherMetrics}
-          onWeatherMetricToggle={toggleWeatherMetric}
+          weatherAverages={weatherAverages}
           roadLegendVisible={layers.some((l) => l.id === "infra_roads" && l.visible)}
           onInfrastructureToggle={toggleInfra}
           onChange={onLayerChange}
