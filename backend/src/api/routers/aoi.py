@@ -10,9 +10,20 @@ from src.service._shared.storage import (
     category_dir,
     create_aoi,
     get_aoi_meta,
+    list_aois,
 )
 
 router = APIRouter(prefix="/api/aoi", tags=["aoi"])
+
+
+@router.get("")
+async def list_aois_endpoint() -> list[dict]:
+    """List all existing AOIs.
+    
+    Returns a list of metadata for all AOIs stored on disk,
+    sorted by newest first.
+    """
+    return list_aois()
 
 
 @router.post("")

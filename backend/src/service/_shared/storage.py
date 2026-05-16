@@ -95,6 +95,23 @@ def get_aoi_meta(aoi_id: str) -> dict | None:
     return read_json(aoi_root(aoi_id) / "meta.json")
 
 
+def list_aois() -> list[dict]:
+    """List all existing AOIs with their metadata."""
+    if not DATA_ROOT.exists():
+        return []
+        
+    aois = []
+    for d in DATA_ROOT.iterdir():
+        if d.is_dir() and (d / "meta.json").exists():
+            meta = read_json(d / "meta.json")
+            if meta:
+                aois.append(meta)
+    
+    # Sort by created_at descending (newest first)
+    aois.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return aois
+
+
 # ---------------------------------------------------------------------------
 # Category metadata and staleness
 # ---------------------------------------------------------------------------
