@@ -14,19 +14,14 @@ import { SOURCES, loadSource } from "../sources";
 import { analysesForCapabilities } from "../analyses";
 
 const SOURCE_ACCENTS: Record<string, string> = {
-  terrain:          "#8a7a5a",
-  landcover:        "#5a7a5a",
-  forest:           "#2a7a2a",
-  water:            "#2a6db5",
-  weather:          "#2a6db5",
-  population:       "#e8622a",
-  infra_roads:      "#a8a8a0",
-  infra_bridges:    "#d4a017",
-  infra_fuel:       "#e8622a",
-  infra_power:      "#d4d020",
-  infra_healthcare: "#c0392b",
-  cellular:         "#2a9d8a",
-  satellites:       "#8060c8",
+  terrain:     "#8a7a5a",
+  landcover:   "#5a7a5a",
+  forest:      "#2a7a2a",
+  water:       "#2a6db5",
+  weather:     "#2a6db5",
+  infra_roads: "#a8a8a0",
+  cellular:    "#2a9d8a",
+  satellites:  "#8060c8",
 };
 
 const EMPTY_FC: FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -49,67 +44,51 @@ const SURV_IDS:   LayerId[] = SOURCES.filter((s) => s.category === "surveillance
 
 // MapLibre source id for each data source id
 const MAP_SOURCE_IDS: Record<string, string> = {
-  landcover:        "natural-landcover-src",
-  forest:           "natural-forest-src",
-  water:            "natural-water-src",
-  weather:          "natural-weather-src",
-  terrain:          "dem-terrain-src",
-  infra_roads:      "infra-roads-src",
-  infra_bridges:    "infra-bridges-src",
-  infra_fuel:       "infra-fuel-src",
-  infra_power:      "infra-power-src",
-  infra_healthcare: "infra-healthcare-src",
-  cellular:         "cellular-src",
-  satellites:       "satellites-src",
+  landcover:   "natural-landcover-src",
+  forest:      "natural-forest-src",
+  water:       "natural-water-src",
+  weather:     "natural-weather-src",
+  terrain:     "dem-terrain-src",
+  infra_roads: "infra-roads-src",
+  cellular:    "cellular-src",
+  satellites:  "satellites-src",
 };
 
 // MapLibre layer ids that each data source drives
 const MAP_LAYER_IDS: Record<string, string[]> = {
-  landcover:        ["natural-landcover-fill", "natural-landcover-line"],
-  forest:           ["natural-forest-fill"],
-  water:            ["natural-water-fill", "natural-water-line"],
-  weather:          ["natural-weather-points"],
-  terrain:          ["dem-terrain-points"],
-  infra_roads:      ["infra-roads-line"],
-  infra_bridges:    ["infra-bridges-line"],
-  infra_fuel:       ["infra-fuel-circle"],
-  infra_power:      ["infra-power-line"],
-  infra_healthcare: ["infra-healthcare-circle"],
-  cellular:         ["cellular-circle"],
-  satellites:       ["satellites-circle"],
+  landcover:   ["natural-landcover-fill", "natural-landcover-line"],
+  forest:      ["natural-forest-fill"],
+  water:       ["natural-water-fill", "natural-water-line"],
+  weather:     ["natural-weather-points"],
+  terrain:     ["dem-terrain-points"],
+  infra_roads: ["infra-roads-line"],
+  cellular:    ["cellular-circle"],
+  satellites:  ["satellites-circle"],
 };
 
 const MAP_LAYER_OPACITY_PROP: Record<string, "fill-opacity" | "line-opacity" | "circle-opacity"> = {
-  "natural-landcover-fill":   "fill-opacity",
-  "natural-landcover-line":   "line-opacity",
-  "natural-forest-fill":      "fill-opacity",
-  "natural-water-fill":       "fill-opacity",
-  "natural-water-line":       "line-opacity",
-  "natural-weather-points":   "circle-opacity",
-  "dem-terrain-points":       "circle-opacity",
-  "infra-roads-line":         "line-opacity",
-  "infra-bridges-line":       "line-opacity",
-  "infra-fuel-circle":        "circle-opacity",
-  "infra-power-line":         "line-opacity",
-  "infra-healthcare-circle":  "circle-opacity",
-  "cellular-circle":          "circle-opacity",
-  "satellites-circle":        "circle-opacity",
+  "natural-landcover-fill": "fill-opacity",
+  "natural-landcover-line": "line-opacity",
+  "natural-forest-fill":    "fill-opacity",
+  "natural-water-fill":     "fill-opacity",
+  "natural-water-line":     "line-opacity",
+  "natural-weather-points": "circle-opacity",
+  "dem-terrain-points":     "circle-opacity",
+  "infra-roads-line":       "line-opacity",
+  "cellular-circle":        "circle-opacity",
+  "satellites-circle":      "circle-opacity",
 };
 
 // Maps each source id to its backend job stage name
 const SOURCE_STAGE: Record<string, string> = {
-  landcover:        "land",
-  forest:           "land",
-  water:            "water",
-  weather:          "weather",
-  terrain:          "dem",
-  infra_roads:      "infrastructure",
-  infra_bridges:    "infrastructure",
-  infra_fuel:       "infrastructure",
-  infra_power:      "infrastructure",
-  infra_healthcare: "infrastructure",
-  cellular:         "cellular",
-  satellites:       "satellites",
+  landcover:   "land",
+  forest:      "land",
+  water:       "water",
+  weather:     "weather",
+  terrain:     "dem",
+  infra_roads: "infrastructure",
+  cellular:    "cellular",
+  satellites:  "satellites",
 };
 
 interface JobInfo {
@@ -161,18 +140,14 @@ export default function OperationsPage() {
   const [stages, setStages] = useState<Record<string, string>>({});
   const loadedSources = useRef<Set<string>>(new Set());
   const [sourceData, setSourceData] = useState<Record<string, FeatureCollection>>({
-    landcover:        EMPTY_FC,
-    forest:           EMPTY_FC,
-    water:            EMPTY_FC,
-    weather:          EMPTY_FC,
-    terrain:          EMPTY_FC,
-    infra_roads:      EMPTY_FC,
-    infra_bridges:    EMPTY_FC,
-    infra_fuel:       EMPTY_FC,
-    infra_power:      EMPTY_FC,
-    infra_healthcare: EMPTY_FC,
-    cellular:         EMPTY_FC,
-    satellites:       EMPTY_FC,
+    landcover:   EMPTY_FC,
+    forest:      EMPTY_FC,
+    water:       EMPTY_FC,
+    weather:     EMPTY_FC,
+    terrain:     EMPTY_FC,
+    infra_roads: EMPTY_FC,
+    cellular:    EMPTY_FC,
+    satellites:  EMPTY_FC,
   });
 
   const capabilityIds = useMemo(() => capabilities.map((c) => c.id), [capabilities]);
@@ -424,7 +399,7 @@ export default function OperationsPage() {
         paint: { "line-color": "#4e8ad1", "line-width": 1.6, "line-opacity": 0.8 },
       });
 
-      // DEM elevation grid — small circles colored by elevation
+      // DEM elevation grid — circles sized to fill the ~60 m grid at every zoom level
       map.addSource(MAP_SOURCE_IDS.terrain, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
         id: "dem-terrain-points",
@@ -432,21 +407,26 @@ export default function OperationsPage() {
         source: MAP_SOURCE_IDS.terrain,
         layout: { visibility: "none" },
         paint: {
-          "circle-radius": 2,
+          // At zoom 8 circles are 1 px; they scale up so adjacent points always touch.
+          "circle-radius": ["interpolate", ["exponential", 2], ["zoom"],
+            8,  1,
+            10, 3,
+            12, 7,
+            14, 16,
+          ],
           "circle-color": [
             "interpolate", ["linear"],
             ["coalesce", ["get", "elevation_m"], 0],
-            0,    "#1a3310",
-            50,   "#2d5016",
-            100,  "#4a7a20",
-            200,  "#6a9a40",
-            400,  "#909a60",
-            700,  "#b0a060",
-            1000, "#c8b880",
-            1500, "#e8e0d0",
+            0,   "#1e3a1e",
+            30,  "#2e5c1e",
+            80,  "#4a8020",
+            150, "#7aa840",
+            250, "#a0b860",
+            400, "#c8c880",
           ],
           "circle-stroke-width": 0,
-          "circle-opacity": 0.65,
+          "circle-blur": 0.4,
+          "circle-opacity": 0.85,
         },
       });
 
@@ -480,54 +460,6 @@ export default function OperationsPage() {
         source: MAP_SOURCE_IDS.infra_roads,
         layout: { visibility: "none" },
         paint: { "line-color": "#a8a8a0", "line-width": 1.5, "line-opacity": 0.8 },
-      });
-
-      map.addSource(MAP_SOURCE_IDS.infra_bridges, { type: "geojson", data: EMPTY_FC });
-      map.addLayer({
-        id: "infra-bridges-line",
-        type: "line",
-        source: MAP_SOURCE_IDS.infra_bridges,
-        layout: { visibility: "none" },
-        paint: { "line-color": "#d4a017", "line-width": 3.5, "line-opacity": 0.9 },
-      });
-
-      map.addSource(MAP_SOURCE_IDS.infra_fuel, { type: "geojson", data: EMPTY_FC });
-      map.addLayer({
-        id: "infra-fuel-circle",
-        type: "circle",
-        source: MAP_SOURCE_IDS.infra_fuel,
-        layout: { visibility: "none" },
-        paint: {
-          "circle-radius": 6,
-          "circle-color": "#e8622a",
-          "circle-stroke-color": "#111111",
-          "circle-stroke-width": 1,
-          "circle-opacity": 0.9,
-        },
-      });
-
-      map.addSource(MAP_SOURCE_IDS.infra_power, { type: "geojson", data: EMPTY_FC });
-      map.addLayer({
-        id: "infra-power-line",
-        type: "line",
-        source: MAP_SOURCE_IDS.infra_power,
-        layout: { visibility: "none" },
-        paint: { "line-color": "#d4d020", "line-width": 1.5, "line-opacity": 0.85 },
-      });
-
-      map.addSource(MAP_SOURCE_IDS.infra_healthcare, { type: "geojson", data: EMPTY_FC });
-      map.addLayer({
-        id: "infra-healthcare-circle",
-        type: "circle",
-        source: MAP_SOURCE_IDS.infra_healthcare,
-        layout: { visibility: "none" },
-        paint: {
-          "circle-radius": 7,
-          "circle-color": "#c0392b",
-          "circle-stroke-color": "#111111",
-          "circle-stroke-width": 1,
-          "circle-opacity": 0.9,
-        },
       });
 
       // ── Surveillance ──────────────────────────────────────────────────────

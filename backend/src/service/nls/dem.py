@@ -16,6 +16,7 @@ Output files:
 import logging
 import os
 
+import httpx
 import numpy as np
 import pandas as pd
 import rasterio
@@ -39,6 +40,7 @@ _to_3067 = Transformer.from_crs("EPSG:4326", "EPSG:3067", always_xy=True)
 _to_4326 = Transformer.from_crs("EPSG:3067", "EPSG:4326", always_xy=True)
 
 _MAX_GRID_POINTS = 90_000   # cap to keep Parquet file reasonable
+_MAX_WCS_PIXELS = 250_000  # NLS WCS rejects requests producing more pixels than this
 
 
 def _tiff_to_parquet(tiff_bytes: bytes, out_path) -> int:
@@ -77,21 +79,32 @@ async def fetch_dem(aoi_id: str, bbox: BBox) -> dict:
     min_e, min_n = _to_3067.transform(bbox.min_lon, bbox.min_lat)
     max_e, max_n = _to_3067.transform(bbox.max_lon, bbox.max_lat)
 
-    params = {
-        "service": "WCS",
-        "version": "2.0.1",
-        "request": "GetCoverage",
-        "coverageId": "korkeusmalli_2m",
-        "subset": [f"E({min_e},{max_e})", f"N({min_n},{max_n})"],
-        "format": "image/tiff",
-    }
+    # Compute a SCALEFACTOR so the native 2m grid never exceeds _MAX_WCS_PIXELS.
+    # The NLS WCS rejects requests that would produce too large an output.
+    native_e = (max_e - min_e) / 2.0
+    native_n = (max_n - min_n) / 2.0
+    scale = min(1.0, (_MAX_WCS_PIXELS / (native_e * native_n)) ** 0.5)
+    scale = round(max(scale, 0.001), 6)
+
+    # Build the query string manually: NLS WCS rejects percent-encoded parentheses
+    # and commas in subset values, which httpx's params= dict would produce.
+    qs = (
+        f"service=WCS&version=2.0.1&request=GetCoverage"
+        f"&coverageId=korkeusmalli_2m"
+        f"&subset=E({min_e},{max_e})"
+        f"&subset=N({min_n},{max_n})"
+        f"&SCALEFACTOR={scale}"
+        f"&format=image/tiff"
+    )
+    if MML_API_KEY:
+        qs += f"&api-key={MML_API_KEY}"
+    url = f"{_NLS_WCS_BASE}?{qs}"
 
     out_path = category_file(aoi_id, "dem", "elevation.parquet")
     ensure_dir(out_path.parent)
 
     try:
-        auth = (MML_API_KEY, "") if MML_API_KEY else None
-        resp = await client.get(_NLS_WCS_BASE, params=params, auth=auth)
+        resp = await client.get(url)
         resp.raise_for_status()
 
         n_points = _tiff_to_parquet(resp.content, out_path)
@@ -105,12 +118,20 @@ async def fetch_dem(aoi_id: str, bbox: BBox) -> dict:
         )
         return {"source": "NLS Finland — Korkeusmalli 2m", "points": n_points}
 
-    except Exception as exc:
-        logger.warning("NLS DEM fetch error: %s", exc)
-        write_category_meta(
-            aoi_id, "dem",
-            source="NLS Finland — Korkeusmalli 2m",
-            confidence="low",
-            feature_counts={},
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "NLS DEM fetch error: HTTP %s\nURL: %s\nBody: %s",
+            exc.response.status_code, exc.request.url, exc.response.text[:500],
         )
-        return {"source": "NLS Finland — Korkeusmalli 2m", "error": str(exc)}
+        error_detail = f"HTTP {exc.response.status_code}"
+    except Exception as exc:
+        logger.warning("NLS DEM fetch error: %s: %s", type(exc).__name__, exc)
+        error_detail = str(exc)
+
+    write_category_meta(
+        aoi_id, "dem",
+        source="NLS Finland — Korkeusmalli 2m",
+        confidence="low",
+        feature_counts={},
+    )
+    return {"source": "NLS Finland — Korkeusmalli 2m", "error": error_detail}

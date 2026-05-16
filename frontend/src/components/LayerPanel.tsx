@@ -42,7 +42,7 @@ export default function LayerPanel({
 
       {sections.map(section => (
         <div key={section.title}>
-          <SectionHeader title={section.title} />
+          {section.title !== "Demographic" && <SectionHeader title={section.title} />}
           {section.layers.map(layer => (
             <LayerRow key={layer.id} layer={layer} onChange={onChange} />
           ))}
@@ -158,60 +158,9 @@ function LayerRow({ layer, onChange }: RowProps) {
             {layer.sublabel}
           </div>
         </div>
-        <div
-          style={{
-            fontFamily: "var(--font-data)",
-            fontSize: 11,
-            color: "var(--color-text-secondary)",
-          }}
-        >
-          {Math.round(layer.opacity * 100)}%
-        </div>
+        {/* opacity percentage removed from row - no opacity controls in UI */}
       </div>
-
-      {layer.visible && (
-        <div
-          style={{
-            padding: "6px 12px 10px 12px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span
-              style={{
-                fontFamily: "var(--font-heading)",
-                fontSize: 10,
-                fontWeight: 600,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                color: "var(--color-text-secondary)",
-              }}
-            >
-              Opacity
-            </span>
-            <span
-              style={{
-                fontFamily: "var(--font-data)",
-                fontSize: 11,
-                color: "var(--color-text-secondary)",
-              }}
-            >
-              {Math.round(layer.opacity * 100)}%
-            </span>
-          </div>
-          <input
-            type="range"
-            className="opacity-slider"
-            min={0}
-            max={1}
-            step={0.01}
-            value={layer.opacity}
-            onChange={e => onChange(layer.id, { opacity: parseFloat(e.target.value) })}
-          />
-        </div>
-      )}
+      {/* Opacity controls intentionally omitted */}
     </div>
   );
 }
