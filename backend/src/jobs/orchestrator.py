@@ -1,78 +1,79 @@
-"""Job orchestrator — the only place that wires service calls together.
+"""Job orchestrator — wires service calls to AoI categories.
 
-Stages run concurrently with asyncio.gather since every fetch is I/O bound.
-A failure in one stage is isolated: the other stages continue and the job
-still completes. The failed stage is marked "error" in Redis and the layer
-key is stored with an error payload so the frontend can show why it's absent.
+Each stage maps to one category folder under src/data/{aoi_id}/.
+Stages run concurrently since all fetches are I/O bound.
+
+Staleness is checked per category before fetching — if a category's data
+is still fresh on disk, its stage is skipped entirely and marked done
+immediately. Only stale or missing categories trigger a network request.
 
 To add a data source:
     1. Create backend/src/service/<source>/<feature>.py
-    2. Import the fetch function here and add it to STAGES
+       — function signature: async def fetch_X(aoi_id: str, bbox: BBox) -> dict
+    2. Import here and add to STAGES
     3. Nothing else changes
 
 To remove a data source:
     1. Delete its module
-    2. Remove it from STAGES here
+    2. Remove it from STAGES
     3. Nothing else breaks
 """
 
 import asyncio
 import logging
 
-from src.jobs.store import set_job_status, set_stage_status, store_layer
+from src.jobs.store import set_job_status, set_stage_status
 from src.service._shared.bbox import BBox
+from src.service._shared.storage import is_stale
 from src.service.ecmwf.weather import fetch_weather
-from src.service.nls.terrain import fetch_terrain
+from src.service.nls.land import fetch_land
+from src.service.nls.water import fetch_water
 from src.service.osm.infra import fetch_infra
 
 logger = logging.getLogger(__name__)
 
-# Add / remove sources here only.
-# Format: (stage_name, async_fetch_fn)
-# stage_name is what the frontend and API use to identify the layer.
+# stage_name must match the category folder name under src/data/{aoi_id}/
 STAGES: list[tuple[str, object]] = [
-    ("terrain",        fetch_terrain),
     ("weather",        fetch_weather),
+    ("water",          fetch_water),
+    ("land",           fetch_land),
     ("infrastructure", fetch_infra),
 ]
 
 STAGE_NAMES: list[str] = [name for name, _ in STAGES]
 
 
-async def _run_stage(job_id: str, stage_name: str, fetch_fn, bbox: BBox) -> None:
-    """Run a single stage, update Redis, and store the layer result."""
+async def _run_stage(
+    job_id: str,
+    aoi_id: str,
+    stage_name: str,
+    fetch_fn,
+    bbox: BBox,
+) -> None:
+    """Run one stage: skip if fresh, otherwise fetch and write to disk."""
+    if not is_stale(aoi_id, stage_name):
+        logger.info("Job %s: stage '%s' cache hit — skipping fetch", job_id, stage_name)
+        await set_stage_status(job_id, stage_name, "done")
+        return
+
     await set_stage_status(job_id, stage_name, "running")
     try:
-        result = await fetch_fn(bbox)
-        await store_layer(job_id, stage_name, result)
-        # Treat a service-level error (empty features + error field) as a warning,
-        # not a hard failure — the layer still goes to Redis so the UI can explain it.
-        if result.get("status") == "error":
-            await set_stage_status(job_id, stage_name, "error")
-            logger.warning("Job %s: stage '%s' returned service error", job_id, stage_name)
-        else:
-            await set_stage_status(job_id, stage_name, "done")
-            logger.info("Job %s: stage '%s' completed (%d features)",
-                        job_id, stage_name, len(result.get("features", [])))
+        summary = await fetch_fn(aoi_id, bbox)
+        await set_stage_status(job_id, stage_name, "done")
+        logger.info("Job %s: stage '%s' done — %s", job_id, stage_name, summary)
     except Exception as exc:
-        logger.error("Job %s: stage '%s' raised unhandled exception: %s", job_id, stage_name, exc)
+        logger.error("Job %s: stage '%s' unhandled error: %s", job_id, stage_name, exc)
         await set_stage_status(job_id, stage_name, "error")
-        await store_layer(job_id, stage_name, {
-            "type": "FeatureCollection",
-            "features": [],
-            "status": "error",
-            "error": str(exc),
-        })
 
 
-async def run_job(job_id: str, bbox: BBox) -> None:
-    """Execute all data-fetch stages concurrently and finalise job status."""
+async def run_job(job_id: str, aoi_id: str, bbox: BBox) -> None:
+    """Run all stages concurrently for the given AoI."""
     await set_job_status(job_id, "running")
 
     await asyncio.gather(*[
-        _run_stage(job_id, name, fn, bbox)
+        _run_stage(job_id, aoi_id, name, fn, bbox)
         for name, fn in STAGES
     ])
 
     await set_job_status(job_id, "completed")
-    logger.info("Job %s: all stages finished", job_id)
+    logger.info("Job %s: all stages finished for AoI %s", job_id, aoi_id)

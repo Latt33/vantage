@@ -1,3 +1,6 @@
+# DEPRECATED — delete this file.
+# Split into: nls/water.py (water bodies + courses) and nls/land.py (land cover)
+
 """Terrain features from the National Land Survey of Finland (NLS / Maanmittauslaitos).
 
 Source:   https://www.maanmittauslaitos.fi/en/maps-and-spatial-data/expert-users/product-descriptions/topographic-database
