@@ -1,19 +1,14 @@
 """Land cover features from the National Land Survey of Finland (NLS).
 
-Fetches land cover (forest, open land, built areas) from the NLS OGC
-Features API and writes it as a GeoJSON file.
+Fetches land cover (forest, buildings) from the NLS OGC Features API.
 
 Output files:
     {aoi_id}/land/cover.geojson      — NLS 'metsamaankasvillisuus' collection
     {aoi_id}/land/buildings.geojson  — NLS 'rakennus' collection
     {aoi_id}/land/meta.json
-
-Source:  https://www.maanmittauslaitos.fi/en
-OGC API: https://avoin-karttakuva.maanmittauslaitos.fi/ogc/features/v2
 """
 
 import logging
-
 import os
 import httpx
 
@@ -30,50 +25,42 @@ logger = logging.getLogger(__name__)
 
 _NLS_BASE = "https://avoin-paikkatieto.maanmittauslaitos.fi/maastotiedot/features/v1"
 MML_API_KEY = os.getenv("MML_API_KEY", "")
-_LIMIT = 500
+_LIMIT = 1000
+
+_COLLECTIONS = [
+    ("metsamaankasvillisuus", "cover.geojson"),
+    ("rakennus",              "buildings.geojson"),
+]
 
 
-async def fetch_land(aoi_id: str, bbox: BBox) -> dict:
-    """Fetch land cover features and write to disk. Returns a summary dict."""
-    url = f"{_NLS_BASE}/collections/metsamaankasvillisuus/items"
+async def _fetch_collection(collection_id: str, bbox: BBox) -> list[dict]:
+    url = f"{_NLS_BASE}/collections/{collection_id}/items"
     params = {"bbox": str(bbox), "limit": _LIMIT, "f": "json"}
-
-    features: list[dict] = []
     try:
         auth = (MML_API_KEY, "") if MML_API_KEY else None
         resp = await client.get(url, params=params, auth=auth)
         resp.raise_for_status()
-        features = resp.json().get("features", [])
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 404:
-            logger.warning("NLS collection 'metsamaankasvillisuus' not found — verify collection ID")
-        else:
-            logger.warning("NLS land HTTP %s", exc.response.status_code)
+        return resp.json().get("features", [])
     except Exception as exc:
-        logger.warning("NLS land error: %s", exc)
+        logger.warning("NLS collection '%s' error: %s", collection_id, exc)
+        return []
 
-    # 2. Fetch Buildings
-    bldg_url = f"{_NLS_BASE}/collections/rakennus/items"
-    buildings: list[dict] = []
-    try:
-        bldg_resp = await client.get(bldg_url, params=params, auth=auth)
-        if bldg_resp.status_code == 200:
-            buildings = bldg_resp.json().get("features", [])
-    except Exception as exc:
-        logger.warning("NLS buildings error: %s", exc)
 
-    fc = feature_collection(features, source="NLS Finland — Topographic Database")
-    write_json(category_file(aoi_id, "land", "cover.geojson"), fc)
+async def fetch_land(aoi_id: str, bbox: BBox) -> dict:
+    """Fetch land cover features and write to disk."""
+    feature_counts: dict[str, int] = {}
 
-    fc_bldg = feature_collection(buildings, source="NLS Finland — Topographic Database")
-    write_json(category_file(aoi_id, "land", "buildings.geojson"), fc_bldg)
-
-    logger.info("NLS land: %d cover features, %d buildings → land/", len(features), len(buildings))
+    for collection_id, filename in _COLLECTIONS:
+        features = await _fetch_collection(collection_id, bbox)
+        fc = feature_collection(features, source="NLS Finland — Topographic Database")
+        write_json(category_file(aoi_id, "land", filename), fc)
+        feature_counts[filename] = len(features)
+        logger.info("NLS land: %d features → %s", len(features), filename)
 
     write_category_meta(
         aoi_id, "land",
         source="NLS Finland — Topographic Database",
-        confidence="high" if features or buildings else "low",
-        feature_counts={"cover.geojson": len(features), "buildings.geojson": len(buildings)},
+        confidence="high" if any(n > 0 for n in feature_counts.values()) else "low",
+        feature_counts=feature_counts,
     )
-    return {"source": "NLS Finland", "feature_counts": {"cover": len(features), "buildings": len(buildings)}}
+    return {"source": "NLS Finland", "feature_counts": feature_counts}
