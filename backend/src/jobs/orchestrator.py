@@ -30,6 +30,7 @@ from src.service.nls.dem import fetch_dem
 from src.service.nls.land import fetch_land
 from src.service.nls.water import fetch_water
 from src.service.nls.infra import fetch_infra
+from src.service.osm.rail import fetch_rail
 from src.service.n2yo.satellite import fetch_satellites
 from src.service.opencellid.towers import fetch_towers
 from src.service.analysis.mcoo import build_mcoo
@@ -43,6 +44,7 @@ FETCH_STAGES: list[tuple[str, object]] = [
     ("water",           fetch_water),
     ("land",            fetch_land),
     ("infrastructure",  fetch_infra),
+    ("rail",            fetch_rail),
     ("dem",             fetch_dem),
     ("satellites",      fetch_satellites),
     ("cellular",        fetch_towers),

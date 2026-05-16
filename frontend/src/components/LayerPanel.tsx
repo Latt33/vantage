@@ -51,12 +51,17 @@ export default function LayerPanel({
       </div>
 
       {sections.map(section => (
-        <WeatherAwareSection
-          key={section.title}
-          section={section}
-          weatherAverages={weatherAverages}
-          onChange={onChange}
-        />
+        <div key={section.title}>
+          {section.title !== "Demographic" && <SectionHeader title={section.title} />}
+          {section.layers.map(layer => (
+            <div key={layer.id}>
+              <LayerRow layer={layer} onChange={onChange} />
+              {layer.id === "weather" && layer.visible && (
+                <WeatherControls metrics={weatherMetrics} onToggle={onWeatherMetricToggle} />
+              )}
+            </div>
+          ))}
+        </div>
       ))}
 
       <div>
@@ -119,6 +124,60 @@ function AddDataSourceButton({ onClick }: { onClick: () => void }) {
         <span style={{ fontSize: 16, lineHeight: 1, fontWeight: 400 }}>+</span>
         Add Data Source
       </button>
+    </div>
+  );
+}
+
+function LandcoverLegend() {
+  const items = [
+    ["Forest", "#2a7a2a"],
+    ["Built-up", "#8b5a2b"],
+    ["Water", "#2a6db5"],
+    ["Wetland", "#4f7f5b"],
+    ["Open land", "#a8b85f"],
+    ["Rock", "#7a7a7a"],
+    ["Other", "#5a7a5a"],
+  ] as const;
+
+  return (
+    <div style={{ padding: "6px 12px 10px 36px", borderBottom: "1px solid var(--color-border-subtle)" }}>
+      <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--color-text-secondary)", marginBottom: 6 }}>
+        Land Type Colors
+      </div>
+      <div style={{ display: "grid", gap: 6 }}>
+        {items.map(([label, color]) => <LegendRow key={label} label={label} color={color} />)}
+      </div>
+    </div>
+  );
+}
+
+function TerrainLegend() {
+  const items = [
+    ["0 m", "#1e3a1e"],
+    ["30 m", "#2e5c1e"],
+    ["80 m", "#4a8020"],
+    ["150 m", "#7aa840"],
+    ["250 m", "#a0b860"],
+    ["400 m+", "#c8c880"],
+  ] as const;
+
+  return (
+    <div style={{ padding: "6px 12px 10px 36px", borderBottom: "1px solid var(--color-border-subtle)" }}>
+      <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--color-text-secondary)", marginBottom: 6 }}>
+        Elevation Colors
+      </div>
+      <div style={{ display: "grid", gap: 6 }}>
+        {items.map(([label, color]) => <LegendRow key={label} label={label} color={color} />)}
+      </div>
+    </div>
+  );
+}
+
+function LegendRow({ label, color }: { label: string; color: string }) {
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <div style={{ width: 18, height: 10, background: color, border: "1px solid rgba(0,0,0,0.15)" }} />
+      <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{label}</div>
     </div>
   );
 }

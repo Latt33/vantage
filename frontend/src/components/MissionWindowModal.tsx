@@ -16,9 +16,9 @@ export interface MissionConditionsUi {
   maxCloudcoverPct:    number;  cloudEnabled:       boolean;
   rainEnabled:         boolean;                                // "no rain allowed" when true
 
-  // Operating hours (UTC+2, Finnish local time) — start/end hour-of-day,
+  // Operating hours (viewer local time) — start/end hour-of-day,
   // inclusive start / exclusive end. Field names keep `Utc` for backwards
-  // compatibility with persisted state; the displayed values are UTC+2.
+  // compatibility with persisted state; the displayed values follow the viewer clock.
   timeOfDayEnabled:    boolean;
   timeStartHourUtc:    number;
   timeEndHourUtc:      number;
@@ -153,10 +153,10 @@ export default function MissionWindowModal({ open, initial, onClose, onApply }: 
           </Section>
 
           {/* ── Operating hours ───────────────────────────────────────── */}
-          <Section title="Operating Hours" subtitle="Hard time-of-day gate (UTC+2 · Finland)">
+          <Section title="Operating Hours" subtitle="Hard time-of-day gate (viewer local time)">
             <ToggleRow
               label="Restrict to time-of-day window"
-              activeLabel={`Active · ${fmtHour(cond.timeStartHourUtc)} → ${fmtHour(cond.timeEndHourUtc)} UTC+2`}
+              activeLabel={`Active · ${fmtHour(cond.timeStartHourUtc)} → ${fmtHour(cond.timeEndHourUtc)} local time`}
               inactiveLabel="Any hour permitted"
               enabled={cond.timeOfDayEnabled}
               onToggle={(v) => setCond((c) => ({ ...c, timeOfDayEnabled: v }))}
@@ -168,7 +168,7 @@ export default function MissionWindowModal({ open, initial, onClose, onApply }: 
                 showToggle={false}
                 value={cond.timeStartHourUtc}
                 min={0} max={23} step={1}
-                format={(v) => fmtHour(v) + " UTC+2"}
+                format={(v) => fmtHour(v) + " local time"}
                 gradient={GRADIENT_NEUTRAL}
                 onChange={(v) => setCond((c) => ({ ...c, timeStartHourUtc: Math.round(v) }))}
               />
@@ -178,7 +178,7 @@ export default function MissionWindowModal({ open, initial, onClose, onApply }: 
                 showToggle={false}
                 value={cond.timeEndHourUtc}
                 min={0} max={23} step={1}
-                format={(v) => fmtHour(v) + " UTC+2"}
+                format={(v) => fmtHour(v) + " local time"}
                 gradient={GRADIENT_NEUTRAL}
                 onChange={(v) => setCond((c) => ({ ...c, timeEndHourUtc: Math.round(v) }))}
               />

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { DEFAULT_IPB_TEMPLATE, IpbReportTemplateFields } from "./template";
 import { downloadIpbReportPdf } from "./pdf";
+import { formatViewerDateTimeInput } from "../utils/time";
 
 export interface ExportLegendState {
   naturalFilters: string[];
@@ -107,7 +108,7 @@ export default function ExportIpbReportModal({
     if (open) {
       setFields({
         ...DEFAULT_IPB_TEMPLATE,
-        datetime: new Date().toISOString().slice(0, 16).replace("T", " "),
+        datetime: formatViewerDateTimeInput(),
       });
     }
   }, [open]);

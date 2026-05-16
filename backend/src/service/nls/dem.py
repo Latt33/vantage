@@ -1,15 +1,17 @@
 """Digital Elevation Model (DEM) from Maanmittauslaitos.
 
 Fetches the 'korkeusmalli_2m' coverage from the NLS WCS API as a GeoTIFF,
-converts it to a Parquet grid in WGS84 (EPSG:4326), and saves it.
+converts it to a Parquet grid in WGS84 (EPSG:4326), and also generates a
+cropped high-resolution PNG overlay for fast map rendering.
 
-The WCS endpoint expects coordinates in ETRS-TM35FIN (EPSG:3067); we
-transform the BBox before the request and transform pixel centres back to
-WGS84 after reading the raster.  To keep the output file manageable,
-pixels are sampled at a step that caps the grid at ~90 000 points.
+The WCS endpoint expects coordinates in ETRS-TM35FIN (EPSG:3067); we buffer
+the requested bbox before the fetch, then reproject back to WGS84 and crop to
+the original bbox before writing the image. The PNG keeps one pixel per sampled
+height cell so it can be used directly as a raster layer.
 
 Output files:
     {aoi_id}/dem/elevation.parquet   — lon, lat, elevation_m
+    {aoi_id}/dem/elevation.png      — cropped raster overlay
     {aoi_id}/dem/meta.json
 """
 
@@ -21,7 +23,11 @@ import numpy as np
 import pandas as pd
 import rasterio
 from rasterio.io import MemoryFile
+from rasterio.transform import array_bounds
+from rasterio.warp import Resampling, calculate_default_transform, reproject
+from rasterio.windows import Window, from_bounds as window_from_bounds, transform as window_transform, intersection
 from pyproj import Transformer
+from PIL import Image
 
 from src.service._shared.bbox import BBox
 from src.service._shared.client import client
@@ -41,6 +47,33 @@ _to_4326 = Transformer.from_crs("EPSG:3067", "EPSG:4326", always_xy=True)
 
 _MAX_GRID_POINTS = 90_000   # cap to keep Parquet file reasonable
 _MAX_WCS_PIXELS = 250_000  # NLS WCS rejects requests producing more pixels than this
+_FETCH_BUFFER_METERS = 750.0
+
+_DEM_COLORS: list[tuple[int, int, int]] = [
+    (30, 58, 30),
+    (46, 92, 30),
+    (74, 128, 32),
+    (122, 168, 64),
+    (160, 184, 96),
+    (200, 200, 128),
+]
+
+
+def _bbox_to_3067_bounds(bbox: BBox) -> tuple[float, float, float, float]:
+    corners = [
+        _to_3067.transform(bbox.min_lon, bbox.min_lat),
+        _to_3067.transform(bbox.max_lon, bbox.min_lat),
+        _to_3067.transform(bbox.max_lon, bbox.max_lat),
+        _to_3067.transform(bbox.min_lon, bbox.max_lat),
+    ]
+    eastings = [p[0] for p in corners]
+    northings = [p[1] for p in corners]
+    return min(eastings), min(northings), max(eastings), max(northings)
+
+
+def _expanded_3067_bounds(bbox: BBox) -> tuple[float, float, float, float]:
+    min_e, min_n, max_e, max_n = _bbox_to_3067_bounds(bbox)
+    return min_e - _FETCH_BUFFER_METERS, min_n - _FETCH_BUFFER_METERS, max_e + _FETCH_BUFFER_METERS, max_n + _FETCH_BUFFER_METERS
 
 
 def _tiff_to_parquet(tiff_bytes: bytes, out_path) -> int:
@@ -74,10 +107,84 @@ def _tiff_to_parquet(tiff_bytes: bytes, out_path) -> int:
     return len(df)
 
 
+def _tiff_to_png(tiff_bytes: bytes, bbox: BBox, out_path) -> tuple[int, int]:
+    """Reproject a DEM GeoTIFF to WGS84, crop to the bbox, and colorize it."""
+    with MemoryFile(tiff_bytes) as mem:
+        with mem.open() as ds:
+            band = ds.read(1).astype("float32")
+            nodata = ds.nodata
+
+            dst_transform, dst_width, dst_height = calculate_default_transform(
+                ds.crs,
+                "EPSG:4326",
+                ds.width,
+                ds.height,
+                *ds.bounds,
+            )
+
+            dst = np.full((dst_height, dst_width), np.nan, dtype="float32")
+            reproject(
+                source=band,
+                destination=dst,
+                src_transform=ds.transform,
+                src_crs=ds.crs,
+                src_nodata=nodata,
+                dst_transform=dst_transform,
+                dst_crs="EPSG:4326",
+                dst_nodata=np.nan,
+                resampling=Resampling.nearest,
+            )
+
+            crop_window = window_from_bounds(
+                bbox.min_lon,
+                bbox.min_lat,
+                bbox.max_lon,
+                bbox.max_lat,
+                dst_transform,
+            ).round_offsets().round_lengths()
+            crop_window = intersection(crop_window, Window(0, 0, dst_width, dst_height))
+
+            row_start = int(crop_window.row_off)
+            col_start = int(crop_window.col_off)
+            row_stop = row_start + int(crop_window.height)
+            col_stop = col_start + int(crop_window.width)
+            cropped = dst[row_start:row_stop, col_start:col_stop]
+
+            valid = np.isfinite(cropped)
+            if not valid.any():
+                image = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+                ensure_dir(out_path.parent)
+                image.save(out_path)
+                return image.size
+
+            values = cropped[valid]
+            low = float(np.percentile(values, 2))
+            high = float(np.percentile(values, 98))
+            if high <= low:
+                high = low + 1.0
+
+            normalized = np.clip((cropped - low) / (high - low), 0.0, 1.0)
+            scaled = normalized * (len(_DEM_COLORS) - 1)
+            lower = np.floor(scaled).astype(int)
+            upper = np.clip(lower + 1, 0, len(_DEM_COLORS) - 1)
+            frac = scaled - lower
+
+            palette = np.asarray(_DEM_COLORS, dtype=np.float32)
+            rgb = (palette[lower] * (1.0 - frac[..., None]) + palette[upper] * frac[..., None]).astype(np.uint8)
+
+            rgba = np.zeros((cropped.shape[0], cropped.shape[1], 4), dtype=np.uint8)
+            rgba[..., :3] = rgb
+            rgba[..., 3] = np.where(valid, 220, 0).astype(np.uint8)
+
+            image = Image.fromarray(rgba, mode="RGBA")
+            ensure_dir(out_path.parent)
+            image.save(out_path)
+            return image.size
+
+
 async def fetch_dem(aoi_id: str, bbox: BBox) -> dict:
     """Fetch NLS DEM, convert to Parquet, and write to disk."""
-    min_e, min_n = _to_3067.transform(bbox.min_lon, bbox.min_lat)
-    max_e, max_n = _to_3067.transform(bbox.max_lon, bbox.max_lat)
+    min_e, min_n, max_e, max_n = _expanded_3067_bounds(bbox)
 
     # Compute a SCALEFACTOR so the native 2m grid never exceeds _MAX_WCS_PIXELS.
     # The NLS WCS rejects requests that would produce too large an output.
@@ -101,6 +208,7 @@ async def fetch_dem(aoi_id: str, bbox: BBox) -> dict:
     url = f"{_NLS_WCS_BASE}?{qs}"
 
     out_path = category_file(aoi_id, "dem", "elevation.parquet")
+    image_path = category_file(aoi_id, "dem", "elevation.png")
     ensure_dir(out_path.parent)
 
     try:
@@ -108,15 +216,16 @@ async def fetch_dem(aoi_id: str, bbox: BBox) -> dict:
         resp.raise_for_status()
 
         n_points = _tiff_to_parquet(resp.content, out_path)
-        logger.info("NLS DEM: %d points → elevation.parquet", n_points)
+        image_size = _tiff_to_png(resp.content, bbox, image_path)
+        logger.info("NLS DEM: %d points → elevation.parquet; image=%sx%s", n_points, image_size[0], image_size[1])
 
         write_category_meta(
             aoi_id, "dem",
             source="NLS Finland — Korkeusmalli 2m",
             confidence="high",
-            feature_counts={"points": n_points},
+            feature_counts={"points": n_points, "image_pixels": image_size[0] * image_size[1]},
         )
-        return {"source": "NLS Finland — Korkeusmalli 2m", "points": n_points}
+        return {"source": "NLS Finland — Korkeusmalli 2m", "points": n_points, "image_pixels": image_size[0] * image_size[1]}
 
     except httpx.HTTPStatusError as exc:
         logger.warning(

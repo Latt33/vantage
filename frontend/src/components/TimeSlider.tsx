@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { formatViewerDateTime } from "../utils/time";
 
 /**
  * One contiguous mission-window block to render on the timeline.
@@ -17,21 +18,18 @@ interface Props {
   windows?: MissionWindowBand[];
   /** AOI centroid — required for the daylight strip. If missing, strip is hidden. */
   aoiCentroid?: { lat: number; lon: number };
+  /** Selected offset from now in hours. When omitted, the control manages its own state. */
+  selectedOffsetHours?: number;
+  /** Notifies the parent when the selected offset changes. */
+  onOffsetChange?: (offsetHours: number) => void;
 }
 
 const DEFAULT_FUTURE_HOURS = 72;
 
-// Finnish standard time = UTC+2 (DST is intentionally ignored — operators
-// asked for a fixed offset, not Europe/Helsinki wall-clock).
-const FIN_OFFSET_HOURS = 2;
-
 function fmt(offsetHours: number): string {
-  const d = new Date();
-  d.setHours(d.getHours() + offsetHours, 0, 0, 0);
-  // Shift into UTC+2 by adding the offset, then read the UTC fields so the
-  // result is independent of the browser's local zone.
-  const shifted = new Date(d.getTime() + FIN_OFFSET_HOURS * 3_600_000);
-  return shifted.toISOString().replace("T", "  ").slice(0, 16) + " UTC+2";
+  return formatViewerDateTime(new Date(Date.now() + offsetHours * 3_600_000), {
+    includeZone: false,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +110,8 @@ export default function TimeSlider({
   forecastHorizonHours = DEFAULT_FUTURE_HOURS,
   windows = [],
   aoiCentroid,
+  selectedOffsetHours,
+  onOffsetChange,
 }: Props) {
   const max = Math.max(1, forecastHorizonHours);
   const min = 0;
@@ -119,7 +119,16 @@ export default function TimeSlider({
 
   const [offset, setOffset] = useState(0);
   // Clamp the offset to the current bounds whenever the horizon changes.
-  const safeOffset = Math.min(Math.max(offset, min), max);
+  const safeOffset = Math.min(Math.max(selectedOffsetHours ?? offset, min), max);
+
+  function updateOffset(next: number) {
+    const clamped = Math.min(Math.max(next, min), max);
+    if (onOffsetChange) {
+      onOffsetChange(clamped);
+      return;
+    }
+    setOffset(clamped);
+  }
 
   const display = useMemo(() => fmt(safeOffset), [safeOffset]);
   const ticks = useMemo(() => buildTicks(max), [max]);
@@ -153,14 +162,14 @@ export default function TimeSlider({
         <button
           className="btn"
           type="button"
-          onClick={() => setOffset((o) => Math.max(min, o - 6))}
+          onClick={() => updateOffset(safeOffset - 6)}
         >
           ◀
         </button>
         <button
           className="btn"
           type="button"
-          onClick={() => setOffset((o) => Math.min(max, o + 6))}
+          onClick={() => updateOffset(safeOffset + 6)}
         >
           ▶
         </button>

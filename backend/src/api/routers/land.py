@@ -14,6 +14,24 @@ async def get_land_cover(aoi_id: str) -> FileResponse:
     return serve_layer_file(aoi_id, "land", "cover.geojson")
 
 
+@router.get("/cover.png", response_class=FileResponse)
+async def get_land_cover_image(aoi_id: str) -> FileResponse:
+    """Rasterized land cover overlay for fast map rendering."""
+    return serve_layer_file(aoi_id, "land", "cover.png")
+
+
+@router.get("/forest", response_class=FileResponse)
+async def get_forest_cover(aoi_id: str) -> FileResponse:
+    """Forest-only polygons derived from the land cover collection."""
+    return serve_layer_file(aoi_id, "land", "forest.geojson")
+
+
+@router.get("/forest.png", response_class=FileResponse)
+async def get_forest_cover_image(aoi_id: str) -> FileResponse:
+    """Rasterized forest-density overlay for fast map rendering."""
+    return serve_layer_file(aoi_id, "land", "forest.png")
+
+
 @router.get("/buildings", response_class=FileResponse)
 async def get_buildings(aoi_id: str) -> FileResponse:
     """Building footprints (GeoJSON FeatureCollection)."""
