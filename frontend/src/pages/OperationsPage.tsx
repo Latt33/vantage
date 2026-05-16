@@ -473,7 +473,35 @@ export default function OperationsPage() {
 
   async function onApplyMissionWindow(cond: MissionConditionsUi) {
     setMissionConditions(cond);
-    setMissionWindows(buildPlaceholderWindows(cond, satTracks));
+    setAnalyzingWindows(true);
+    try {
+      // If Satellite Surveillance is required but trajectories haven't been
+      // fetched yet, pull them once before the analysis runs so the filter
+      // has data to check against. Mirrors the lazy fetch used by the
+      // surveillance filters in the side panel.
+      let tracks = satTracks;
+      if ((cond.satOpticalEnabled || cond.satSarEnabled)
+          && activeAoiId
+          && !satTracksLoaded.current
+          && !satTracksLoading.current) {
+        satTracksLoading.current = true;
+        setSatTracksLoadState("loading");
+        try {
+          const fc = await fetchTrajectories(activeAoiId);
+          tracks = fc;
+          setSatTracks(fc);
+          satTracksLoaded.current = true;
+        } catch (err) {
+          console.warn("[mission-window] satellite trajectory fetch failed", err);
+        } finally {
+          satTracksLoading.current = false;
+          setSatTracksLoadState("done");
+        }
+      }
+      setMissionWindows(buildPlaceholderWindows(cond, sourceData.weather, tracks));
+    } finally {
+      setAnalyzingWindows(false);
+    }
   }
 
   function onLayerChange(id: LayerId, patch: Partial<LayerConfig>) {
@@ -1848,8 +1876,13 @@ export default function OperationsPage() {
 const OPTICAL_CONSTELLATIONS = new Set(["sentinel_2", "landsat_9", "planet_skysat"]);
 const SAR_CONSTELLATIONS     = new Set(["sentinel_1", "iceye_x"]);
 
-function buildPlaceholderWindows(cond: MissionConditionsUi, satTracks: FeatureCollection): MissionWindowBand[] {
-  const horizon = Math.max(1, cond.lookaheadHours);
+function buildPlaceholderWindows(
+  cond: MissionConditionsUi,
+  weather: FeatureCollection,
+  satTracks: FeatureCollection,
+): MissionWindowBand[] {
+  const features = weather?.features ?? [];
+  if (features.length === 0) return [];
 
   // Group every grid point by its forecast timestamp.
   const buckets = new Map<string, { ts: number; features: typeof features }>();
@@ -1871,7 +1904,6 @@ function buildPlaceholderWindows(cond: MissionConditionsUi, satTracks: FeatureCo
   const horizonH = Math.max(1, cond.lookaheadHours);
   const horizonMs = horizonH * 3_600_000;
 
-  // Keep only forecast steps inside [now, now + horizon].
   const steps = Array.from(buckets.values())
     .filter((b) => b.ts >= nowMs - 30 * 60_000 && b.ts - nowMs <= horizonMs)
     .sort((a, b) => a.ts - b.ts);
@@ -1888,27 +1920,30 @@ function buildPlaceholderWindows(cond: MissionConditionsUi, satTracks: FeatureCo
 
   // Coalesce runs of passing timesteps into one band each.
   const bands: MissionWindowBand[] = [];
-
-  for (let i = 0; i < seeds.length; i++) {
-    const c = seeds[i].center;
-    const half = baseWidth / 2;
-    const start = Math.round(Math.max(0, c - half));
-    const end = Math.round(Math.min(horizon, c + half));
-    if (end <= start) continue;
-
-    // Confidence drops with forecast horizon — later windows tend to be uncertain.
-    const horizonFrac = c / horizon;
-    const goodChance = (1 - horizonFrac) * (0.4 + 0.6 * looseness);
-    const kind: MissionWindowBand["kind"] = goodChance >= cond.minScore ? "good" : "uncertain";
-
-    bands.push({ startHour: start, endHour: end, kind });
+  let i = 0;
+  while (i < evals.length) {
+    if (!evals[i].pass) { i++; continue; }
+    const runStart = evals[i].hourOffset;
+    let runEnd = runStart;
+    while (i + 1 < evals.length && evals[i + 1].pass) {
+      i++;
+      runEnd = evals[i].hourOffset;
+    }
+    const nextOffset = i + 1 < evals.length ? evals[i + 1].hourOffset : runEnd + 1;
+    const bandEnd = Math.min(horizonH, Math.max(runStart + 1, nextOffset));
+    bands.push({
+      startHour: Math.max(0, Math.floor(runStart)),
+      endHour: Math.min(horizonH, Math.ceil(bandEnd)),
+      kind: "good",
+    });
+    i++;
   }
 
-  // Annotate bands with satellite overpass coverage when checks are enabled.
+  // Satellite surveillance: when toggled, each band must have at least one
+  // overpass within its operator-defined [-before, +after] envelope. Bands
+  // that fail any required check are dropped from the result; bands that pass
+  // get pass=true annotations so the timeline renders the OPT/SAR badge.
   if (cond.satOpticalEnabled || cond.satSarEnabled) {
-    const nowMs = Date.now();
-
-    // Collect overpass timestamps (ms) by sensor type from the trajectory cache.
     const opticalTimes: number[] = [];
     const sarTimes: number[] = [];
     for (const feat of satTracks.features) {
@@ -1920,25 +1955,39 @@ function buildPlaceholderWindows(cond: MissionConditionsUi, satTracks: FeatureCo
       if (SAR_CONSTELLATIONS.has(p.constellation as string))     sarTimes.push(ts);
     }
 
-    for (const band of bands) {
+    return bands.filter((band) => {
       const bandStartMs = nowMs + band.startHour * 3_600_000;
       const bandEndMs   = nowMs + band.endHour   * 3_600_000;
 
       if (cond.satOpticalEnabled) {
         const lo = bandStartMs - cond.satOpticalBeforeH * 3_600_000;
         const hi = bandEndMs   + cond.satOpticalAfterH  * 3_600_000;
-        band.satOpticalPass = opticalTimes.some((t) => t >= lo && t <= hi);
+        const pass = opticalTimes.some((t) => t >= lo && t <= hi);
+        if (!pass) return false;
+        band.satOpticalPass = true;
       }
 
       if (cond.satSarEnabled) {
         const lo = bandStartMs - cond.satSarBeforeH * 3_600_000;
         const hi = bandEndMs   + cond.satSarAfterH  * 3_600_000;
-        band.satSarPass = sarTimes.some((t) => t >= lo && t <= hi);
+        const pass = sarTimes.some((t) => t >= lo && t <= hi);
+        if (!pass) return false;
+        band.satSarPass = true;
       }
-    }
+
+      return true;
+    });
   }
 
   return bands;
+}
+
+interface AtmosStats {
+  windMs:      number | null;
+  gustMs:      number | null;
+  visibilityM: number | null;
+  cloudPct:    number | null;
+  precipMm:    number | null;
 }
 
 function atmosphericMeans(features: FeatureCollection["features"]): AtmosStats {
@@ -2043,6 +2092,15 @@ const HEAVY_MOVEMENT_CORRIDOR_LEGEND: Array<{ label: string; color: string; tran
   { label: "No-Go", color: "rgba(210, 55, 55, 0.9)" },
 ];
 
+const FPV_THREAT_AREAS_KEY = "fpv_drones:fpv_threat_areas";
+const FPV_THREAT_LEGEND: Array<{ label: string; color: string; transparent?: boolean }> = [
+  { label: "High Threat", color: "rgba(10, 30, 110, 0.82)" },
+  { label: "Moderate", color: "rgba(60, 110, 190, 0.70)" },
+  { label: "Low", color: "rgba(140, 180, 230, 0.55)" },
+  { label: "Hidden (Canopy)", color: "transparent", transparent: true },
+  { label: "No Possibility", color: "rgba(210, 55, 55, 0.85)" },
+];
+
 function MapLegend({
   layers,
   terrainElevRange,
@@ -2056,7 +2114,8 @@ function MapLegend({
   const forestOn    = layers.some((l) => l.id === "forest"    && l.visible);
   const terrainOn   = layers.some((l) => l.id === "terrain"   && l.visible);
   const heavyCorridorsOn = derivedSelected.has(HEAVY_MOVEMENT_CORRIDOR_KEY);
-  if (!landcoverOn && !forestOn && !terrainOn && !heavyCorridorsOn) return null;
+  const fpvThreatOn = derivedSelected.has(FPV_THREAT_AREAS_KEY);
+  if (!landcoverOn && !forestOn && !terrainOn && !heavyCorridorsOn && !fpvThreatOn) return null;
 
   return (
     <div
@@ -2134,6 +2193,31 @@ function MapLegend({
             Heavy Vehicle Corridors
           </div>
           {HEAVY_MOVEMENT_CORRIDOR_LEGEND.map(({ label, color, transparent }) => (
+            <div key={label} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+              <div
+                style={{
+                  width: 11,
+                  height: 11,
+                  borderRadius: 2,
+                  flexShrink: 0,
+                  border: "1px solid rgba(255,255,255,0.30)",
+                  background: transparent
+                    ? "repeating-linear-gradient(45deg, rgba(255,255,255,0.08) 0 3px, rgba(255,255,255,0.18) 3px 6px)"
+                    : color,
+                }}
+              />
+              <span>{label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {fpvThreatOn && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--color-text-dim)", marginBottom: 5 }}>
+            FPV Threat Areas
+          </div>
+          {FPV_THREAT_LEGEND.map(({ label, color, transparent }) => (
             <div key={label} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
               <div
                 style={{

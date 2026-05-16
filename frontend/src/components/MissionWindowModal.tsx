@@ -23,11 +23,6 @@ export interface MissionConditionsUi {
   timeStartHourUtc:    number;
   timeEndHourUtc:      number;
 
-  // Derived metrics — UI preview only.
-  maxSlopeDeg:           number;  slopeEnabled:           boolean;
-  minTrafficabilityPct:  number;  trafficabilityEnabled:  boolean;
-  minLineOfSightKm:      number;  losEnabled:             boolean;
-
   // Analysis parameters
   lookaheadHours: number;
   minScore:       number;
@@ -53,10 +48,6 @@ export const DEFAULT_CONDITIONS: MissionConditionsUi = {
   timeOfDayEnabled: false,
   timeStartHourUtc: 6,
   timeEndHourUtc:   18,
-
-  maxSlopeDeg:           20,  slopeEnabled:           false,
-  minTrafficabilityPct:  60,  trafficabilityEnabled:  false,
-  minLineOfSightKm:      3,   losEnabled:             false,
 
   lookaheadHours: 72,
   minScore:       0.6,
@@ -207,40 +198,6 @@ export default function MissionWindowModal({ open, initial, analyzing = false, o
             {cond.timeOfDayEnabled && cond.timeEndHourUtc < cond.timeStartHourUtc && (
               <HintText>Window crosses midnight (end is the following day).</HintText>
             )}
-          </Section>
-
-          {/* ── Derived metrics (preview) ─────────────────────────────── */}
-          <Section title="Derived Metrics" subtitle="Terrain-derived — UI preview, not scored yet">
-            <GradientRow
-              label="Max Terrain Slope"
-              enabled={cond.slopeEnabled}
-              onToggle={(v) => setCond((c) => ({ ...c, slopeEnabled: v }))}
-              value={cond.maxSlopeDeg}
-              min={0} max={45} step={1}
-              format={(v) => `≤ ${Math.round(v)}°`}
-              gradient={GRADIENT_BELOW}
-              onChange={(v) => setCond((c) => ({ ...c, maxSlopeDeg: v }))}
-            />
-            <GradientRow
-              label="Min Trafficability"
-              enabled={cond.trafficabilityEnabled}
-              onToggle={(v) => setCond((c) => ({ ...c, trafficabilityEnabled: v }))}
-              value={cond.minTrafficabilityPct}
-              min={0} max={100} step={1}
-              format={(v) => `≥ ${Math.round(v)} %`}
-              gradient={GRADIENT_ABOVE}
-              onChange={(v) => setCond((c) => ({ ...c, minTrafficabilityPct: v }))}
-            />
-            <GradientRow
-              label="Min Line-of-Sight Range"
-              enabled={cond.losEnabled}
-              onToggle={(v) => setCond((c) => ({ ...c, losEnabled: v }))}
-              value={cond.minLineOfSightKm}
-              min={0} max={20} step={0.5}
-              format={(v) => `≥ ${v.toFixed(1)} km`}
-              gradient={GRADIENT_ABOVE}
-              onChange={(v) => setCond((c) => ({ ...c, minLineOfSightKm: v }))}
-            />
           </Section>
 
           {/* ── Satellite surveillance ────────────────────────────────── */}
@@ -664,9 +621,6 @@ function buildSummary(c: MissionConditionsUi): string[] {
   if (c.cloudEnabled)      out.push(`Cloud ≤ ${Math.round(c.maxCloudcoverPct)} %`);
   if (c.rainEnabled)       out.push("No rain");
   if (c.timeOfDayEnabled)  out.push(`Hours ${fmtHour(c.timeStartHourUtc)}–${fmtHour(c.timeEndHourUtc)}`);
-  if (c.slopeEnabled)          out.push(`Slope ≤ ${Math.round(c.maxSlopeDeg)}°`);
-  if (c.trafficabilityEnabled) out.push(`Traffic ≥ ${Math.round(c.minTrafficabilityPct)} %`);
-  if (c.losEnabled)            out.push(`LOS ≥ ${c.minLineOfSightKm.toFixed(1)} km`);
   if (c.satOpticalEnabled) {
     const b = c.satOpticalBeforeH > 0 ? `−${c.satOpticalBeforeH}h` : "";
     const a = c.satOpticalAfterH  > 0 ? `+${c.satOpticalAfterH}h`  : "";
