@@ -33,7 +33,7 @@ export default function ToolPanel({
     >
       <PanelHeader title="Tools" />
 
-      <div style={{ flex: 1, overflowY: "auto" }}>
+      <div className="panel-scroll" style={{ flex: 1, overflowY: "auto" }}>
         <SectionHeader title="Forces & Capabilities" />
         {capabilities.length === 0 ? (
           <EmptyState text="No forces selected" />

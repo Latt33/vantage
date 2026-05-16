@@ -9,6 +9,20 @@ export type AppMode = "select" | "confirm" | "analyze";
 
 export type WeatherMetricId = "cloudAmount" | "cloudHeight" | "visibility" | "temperature" | "windSpeed";
 
+/**
+ * AoI-wide averages computed across all grid points at the first valid_time.
+ * Each value is null when no data is available for that variable.
+ */
+export interface WeatherAverages {
+  windSpeed: number | null;       // m/s
+  windDir: number | null;         // degrees, meteorological "from" direction
+  windGust: number | null;        // m/s
+  temperature: number | null;     // °C
+  cloudAmount: number | null;     // % total cloud cover
+  cloudHeight: number | null;     // % high-cloud proxy
+  visibility: number | null;      // m
+}
+
 export const MAX_AOI_KM = 30;
 
 /**

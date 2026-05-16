@@ -244,6 +244,34 @@ html, body, #root {
   color: var(--color-text-secondary);
 }
 
+/* Themed thin scrollbar — applied to side panels */
+.panel-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-default) transparent;
+}
+
+.panel-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.panel-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.panel-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-border-default);
+  border: none;
+}
+
+.panel-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-strong);
+}
+
+.panel-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* MapLibre overrides for dark theme */
 .maplibregl-ctrl-attrib {
   background: rgba(17, 17, 17, 0.85) !important;
@@ -258,4 +286,34 @@ html, body, #root {
 
 .maplibregl-canvas:focus {
   outline: none;
+}
+
+/* Navigation control — themed compass (dark panel + orange north needle).
+   The icon background-image lives on `.maplibregl-ctrl-icon`, which is the
+   element MapLibre rotates as the map bearing changes — so swapping its
+   image inherits the rotation automatically. */
+.maplibregl-ctrl-group {
+  background: rgba(17, 17, 17, 0.85) !important;
+  border: 1px solid var(--color-border-default) !important;
+  box-shadow: none !important;
+}
+
+.maplibregl-ctrl-group button {
+  width: 30px !important;
+  height: 30px !important;
+  background-color: transparent !important;
+}
+
+.maplibregl-ctrl-group button:not(:disabled):hover {
+  background-color: var(--color-bg-hover) !important;
+}
+
+.maplibregl-ctrl-group button:focus,
+.maplibregl-ctrl-group button:focus:focus-visible {
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.maplibregl-ctrl-compass .maplibregl-ctrl-icon {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'><text x='15' y='8' text-anchor='middle' font-family='sans-serif' font-size='8' font-weight='700' fill='%23e8e4d9'>N</text><polygon points='15,10 11,19 15,16 19,19' fill='%23e8622a'/><polygon points='15,28 11,19 15,22 19,19' fill='%238a8880'/><circle cx='15' cy='19' r='1.2' fill='%23e8e4d9'/></svg>") !important;
 }

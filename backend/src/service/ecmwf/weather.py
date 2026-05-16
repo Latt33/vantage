@@ -1,8 +1,14 @@
-"""Weather forecast from ECMWF IFS via Open-Meteo — area grid coverage.
+"""Weather forecast via Open-Meteo — area grid coverage.
 
 Fetches a 3-day hourly forecast for a regular grid of points within the
-bounding box.  ECMWF IFS resolution is ~0.25° (~28 km); grid points are
-spaced at 0.25° intervals.
+bounding box. Grid spacing is ~9 km (0.08° lat × 0.16° lon at 60°N), giving
+roughly 10–20 points across a 30×30 km AoI.
+
+Open-Meteo `best_match` is used so the proxy picks the highest-resolution
+model available per location — for Nordic AoIs this is typically MET Norway
+Nordic (2.5 km); elsewhere in the EU it falls back to DWD ICON-EU (6 km) or
+ECMWF IFS (0.25°). The previous `ecmwf_ifs04` model name is deprecated and
+returns nulls for every variable.
 
 Output is a flat Parquet grid: one row per (grid-point × time-step).
 The API layer converts Parquet to GeoJSON on demand.
@@ -14,19 +20,17 @@ Output files:
 Schema (one row per grid-point × time-step):
     lon             float64   degrees east
     lat             float64   degrees north
-    valid_time      str       ISO 8601 UTC
+    valid_time      str       ISO 8601 local (Europe/Helsinki)
     wind_speed_ms   float32   m/s at 10 m
     wind_dir_deg    float32   degrees from north at 10 m
     wind_gust_ms    float32   m/s at 10 m
     ... (see _PARAM_RENAME for full list)
 
-Source model: ECMWF IFS (European Centre for Medium-Range Weather Forecasts)
-Proxy API:    Open-Meteo (https://open-meteo.com) — EU-hosted, no key required
+Proxy API: Open-Meteo (https://open-meteo.com) — EU-hosted, no key required
 """
 
 import logging
 import math
-import asyncio
 
 import pandas as pd
 
@@ -38,7 +42,11 @@ from src.service._shared.storage import category_file, write_category_meta
 logger = logging.getLogger(__name__)
 
 _OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
-_GRID_RESOLUTION = 0.25   # degrees — matches ECMWF IFS native resolution
+# ~9 km spacing at Finnish latitudes (60°N): 0.08° lat ≈ 8.9 km, 0.16° lon ≈ 8.9 km.
+# At lower latitudes the lon spacing in km shrinks slightly — acceptable, the goal
+# is "as many readings from the AOI as possible" at ≈9 km, not exact spacing.
+_GRID_RES_LAT = 0.08
+_GRID_RES_LON = 0.16
 _MAX_POINTS = 100         # guard against very large bboxes
 
 _HOURLY_PARAMS = [
@@ -97,19 +105,17 @@ _PARAM_RENAME: dict[str, str] = {
 
 
 def _grid_points(bbox: BBox) -> list[tuple[float, float]]:
-    res = _GRID_RESOLUTION
-
-    def _snap_up(v: float) -> float:
+    def _snap_up(v: float, res: float) -> float:
         return math.ceil(v / res) * res
 
     points: list[tuple[float, float]] = []
-    lat = _snap_up(bbox.min_lat)
+    lat = _snap_up(bbox.min_lat, _GRID_RES_LAT)
     while lat <= bbox.max_lat + 1e-9:
-        lon = _snap_up(bbox.min_lon)
+        lon = _snap_up(bbox.min_lon, _GRID_RES_LON)
         while lon <= bbox.max_lon + 1e-9:
             points.append((round(lat, 6), round(lon, 6)))
-            lon = round(lon + res, 6)
-        lat = round(lat + res, 6)
+            lon = round(lon + _GRID_RES_LON, 6)
+        lat = round(lat + _GRID_RES_LAT, 6)
 
     if not points:
         clat = round((bbox.min_lat + bbox.max_lat) / 2, 6)
@@ -120,31 +126,34 @@ def _grid_points(bbox: BBox) -> list[tuple[float, float]]:
 
 
 async def fetch_weather(aoi_id: str, bbox: BBox) -> dict:
-    """Fetch area weather grid and write as Parquet.  Returns a summary dict."""
+    """Fetch area weather grid and write as Parquet. Returns a summary dict.
+
+    Uses Open-Meteo's multi-coordinate request format (comma-separated
+    latitude/longitude lists in a single HTTP call). One call per AoI instead
+    of one per grid point — avoids the 429 rate-limit that the per-point
+    fan-out was triggering.
+    """
     points = _grid_points(bbox)
 
-    async def _fetch_point(lat: float, lon: float) -> dict:
-        params = {
-            "latitude":       lat,
-            "longitude":      lon,
-            "hourly":         ",".join(_HOURLY_PARAMS),
-            "forecast_days":  3,
-            "windspeed_unit": "ms",
-            "models":         "ecmwf_ifs04",
-            "timezone":       "Europe/Helsinki",
-        }
-        resp = await client.get(_OPEN_METEO_URL, params=params)
-        resp.raise_for_status()
-        return resp.json()
+    params = {
+        "latitude":       ",".join(f"{lat:.6f}" for lat, _ in points),
+        "longitude":      ",".join(f"{lon:.6f}" for _, lon in points),
+        "hourly":         ",".join(_HOURLY_PARAMS),
+        "forecast_days":  3,
+        "windspeed_unit": "ms",
+        "models":         "best_match",
+        "timezone":       "Europe/Helsinki",
+    }
 
     try:
-        semaphore = asyncio.Semaphore(8)
+        resp = await client.get(_OPEN_METEO_URL, params=params)
+        resp.raise_for_status()
+        payload = resp.json()
 
-        async def _bounded_fetch(lat: float, lon: float) -> dict:
-          async with semaphore:
-              return await _fetch_point(lat, lon)
+        # Open-Meteo returns a list when multiple coordinates are requested,
+        # a single object when only one. Normalise to a list.
+        results: list[dict] = payload if isinstance(payload, list) else [payload]
 
-        results = await asyncio.gather(*[_bounded_fetch(lat, lon) for lat, lon in points])
         times: list[str] = results[0].get("hourly", {}).get("time", []) if results else []
 
         rows = []
@@ -159,7 +168,6 @@ async def fetch_weather(aoi_id: str, bbox: BBox) -> dict:
                 rows.append(row)
 
         df = pd.DataFrame(rows)
-        # Downcast weather value columns to float32 to save space
         float_cols = [c for c in df.columns if c not in ("lon", "lat", "valid_time")]
         df[float_cols] = df[float_cols].astype("float32")
 
@@ -167,28 +175,28 @@ async def fetch_weather(aoi_id: str, bbox: BBox) -> dict:
         write_parquet_grid(out_path, df)
 
         logger.info(
-            "ECMWF weather: %d grid points × %d time steps → forecast.parquet",
+            "Open-Meteo weather: %d grid points × %d time steps → forecast.parquet (1 HTTP call)",
             len(results), len(times),
         )
 
         write_category_meta(
             aoi_id, "weather",
-            source="Open-Meteo / ECMWF IFS",
+            source="Open-Meteo (best_match)",
             confidence="high",
             feature_counts={"grid_points": len(points), "time_steps": len(times)},
         )
         return {
-            "source": "Open-Meteo / ECMWF IFS",
+            "source": "Open-Meteo (best_match)",
             "grid_points": len(points),
             "time_steps": len(times),
         }
 
     except Exception as exc:
-        logger.warning("ECMWF weather fetch failed: %s", exc)
+        logger.warning("Open-Meteo weather fetch failed: %s", exc)
         write_category_meta(
             aoi_id, "weather",
-            source="Open-Meteo / ECMWF IFS",
+            source="Open-Meteo (best_match)",
             confidence="low",
             feature_counts={},
         )
-        return {"source": "Open-Meteo / ECMWF IFS", "error": str(exc)}
+        return {"source": "Open-Meteo (best_match)", "error": str(exc)}
