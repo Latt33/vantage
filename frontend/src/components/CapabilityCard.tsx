@@ -66,16 +66,6 @@ export default function CapabilityCard({ capability, selected, index, onToggle }
         >
           {capability.label}
         </div>
-        <div
-          style={{
-            marginTop: 4,
-            fontFamily: "var(--font-data)",
-            fontSize: 9,
-            color: "var(--color-text-secondary)",
-          }}
-        >
-          {capability.sublabel}
-        </div>
       </div>
     </motion.button>
   );
