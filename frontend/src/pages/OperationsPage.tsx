@@ -1465,7 +1465,11 @@ export default function OperationsPage() {
 
         <div style={{ flex: 1, position: "relative" }}>
           <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
-          <MapLegend layers={layers} derivedSelected={derivedSelected} />
+          <MapLegend
+            layers={layers}
+            terrainElevRange={terrainElevRange}
+            derivedSelected={derivedSelected}
+          />
         </div>
 
         <LayerPanel
@@ -1628,11 +1632,20 @@ const HEAVY_MOVEMENT_CORRIDOR_LEGEND: Array<{ label: string; color: string; tran
   { label: "No-Go", color: "rgba(210, 55, 55, 0.9)" },
 ];
 
-function MapLegend({ layers, derivedSelected }: { layers: LayerConfig[]; derivedSelected: Set<string> }) {
+function MapLegend({
+  layers,
+  terrainElevRange,
+  derivedSelected,
+}: {
+  layers: LayerConfig[];
+  terrainElevRange: { min: number; max: number } | null;
+  derivedSelected: Set<string>;
+}) {
   const landcoverOn = layers.some((l) => l.id === "landcover" && l.visible);
   const forestOn    = layers.some((l) => l.id === "forest"    && l.visible);
+  const terrainOn   = layers.some((l) => l.id === "terrain"   && l.visible);
   const heavyCorridorsOn = derivedSelected.has(HEAVY_MOVEMENT_CORRIDOR_KEY);
-  if (!landcoverOn && !forestOn && !heavyCorridorsOn) return null;
+  if (!landcoverOn && !forestOn && !terrainOn && !heavyCorridorsOn) return null;
 
   return (
     <div
