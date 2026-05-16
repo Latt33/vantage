@@ -26,7 +26,7 @@ from src.service._shared.storage import (
 
 logger = logging.getLogger(__name__)
 
-_NLS_WCS_BASE = "https://avoin-karttakuva.maanmittauslaitos.fi/wcs/v2"
+_NLS_WCS_BASE = "https://avoin-karttakuva.maanmittauslaitos.fi/ortokuvat-ja-korkeusmallit/wcs/v2"
 MML_API_KEY = os.getenv("MML_API_KEY", "")
 
 # Transform WGS84 (lon/lat) to ETRS-TM35FIN (E/N)
@@ -44,7 +44,7 @@ async def fetch_dem(aoi_id: str, bbox: BBox) -> dict:
         "service": "WCS",
         "version": "2.0.1",
         "request": "GetCoverage",
-        "coverageId": "korkeusmalli_10m",
+        "coverageId": "korkeusmalli_2m",
         "subset": [
             f"E({min_e},{max_e})",
             f"N({min_n},{max_n})"
