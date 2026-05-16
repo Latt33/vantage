@@ -247,25 +247,7 @@ async function loadWater(area: AreaContext, signal?: AbortSignal): Promise<Featu
 async function loadWeather(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
   const aoiId = getBackendAoiId(area);
   const raw = await fetchJson(`/api/aoi/${aoiId}/weather/forecast`, signal);
-  const fc = asFeatureCollection(raw);
-
-  // Parquet has one row per (grid-point × time-step). Keep only the earliest
-  // valid_time so each grid point appears once. Stay as Point features —
-  // the map renders one wind-arrow per point, not a polygon grid.
-  const times = [
-    ...new Set(
-      fc.features
-        .map((f) => f.properties?.valid_time as string | undefined)
-        .filter((t): t is string => Boolean(t))
-    ),
-  ].sort();
-  const firstTime = times[0];
-  if (!firstTime) return fc;
-
-  return {
-    ...fc,
-    features: fc.features.filter((f) => f.properties?.valid_time === firstTime),
-  };
+  return asFeatureCollection(raw);
 }
 
 // ── Infrastructure ────────────────────────────────────────────────────────────

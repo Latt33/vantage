@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { formatViewerDateTime } from "../utils/time";
 
 /**
@@ -130,6 +130,32 @@ export default function TimeSlider({
     setOffset(clamped);
   }
 
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  const offsetRef = useRef(safeOffset);
+  useEffect(() => {
+    offsetRef.current = safeOffset;
+  }, [safeOffset]);
+
+  useEffect(() => {
+    if (!isPlaying) return;
+    
+    // If we start playing from the very end, restart from 0
+    if (offsetRef.current >= max) {
+      updateOffset(0);
+    }
+
+    const interval = setInterval(() => {
+      const current = offsetRef.current;
+      if (current >= max) {
+        setIsPlaying(false);
+        return;
+      }
+      updateOffset(current + 1);
+    }, 400); // 400ms per 1-hour step -> 28 seconds for 72 hours
+    return () => clearInterval(interval);
+  }, [isPlaying, max]);
+
   const display = useMemo(() => fmt(safeOffset), [safeOffset]);
   const ticks = useMemo(() => buildTicks(max), [max]);
 
@@ -172,6 +198,31 @@ export default function TimeSlider({
           onClick={() => updateOffset(safeOffset + 6)}
         >
           ▶
+        </button>
+        <button
+          className="btn"
+          type="button"
+          onClick={() => setIsPlaying(!isPlaying)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderColor: isPlaying ? "#e74c3c" : "var(--color-accent-green, #4caf50)",
+            color: isPlaying ? "#ffffff" : "var(--color-accent-green, #4caf50)",
+            background: isPlaying ? "#e74c3c" : "transparent",
+            minWidth: 40,
+            height: 32, // Lock height so it doesn't jump
+            padding: 0,
+          }}
+        >
+          {isPlaying ? (
+            <div style={{ display: "flex", gap: 3 }}>
+              <div style={{ width: 4, height: 14, background: "#ffffff", borderRadius: 1 }} />
+              <div style={{ width: 4, height: 14, background: "#ffffff", borderRadius: 1 }} />
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, transform: "translateX(1px)" }}>▶</div>
+          )}
         </button>
         <div
           style={{
@@ -269,7 +320,7 @@ export default function TimeSlider({
           max={max}
           step={1}
           value={safeOffset}
-          onChange={(e) => setOffset(parseInt(e.target.value, 10))}
+          onChange={(e) => updateOffset(parseInt(e.target.value, 10))}
           style={{ position: "absolute", inset: "0 0 12px 0", width: "100%" }}
         />
 

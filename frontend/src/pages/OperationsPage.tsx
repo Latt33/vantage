@@ -354,6 +354,36 @@ export default function OperationsPage() {
     [aoi, sourceData.satellites, timelineOffsetHours],
   );
 
+  const weatherDisplayData = useMemo(() => {
+    const raw = sourceData.weather;
+    if (!raw || !raw.features || raw.features.length === 0) return EMPTY_FC;
+
+    const selectedMs = Date.now() + timelineOffsetHours * 3_600_000;
+    
+    let bestTime: string | null = null;
+    let minDiff = Infinity;
+
+    for (const f of raw.features) {
+      const p = f.properties;
+      if (!p || !p.valid_time) continue;
+      const t = toEpochMs(p.valid_time);
+      if (t === null) continue;
+      
+      const diff = Math.abs(t - selectedMs);
+      if (diff < minDiff) {
+        minDiff = diff;
+        bestTime = p.valid_time;
+      }
+    }
+
+    if (!bestTime) return raw;
+
+    return {
+      type: "FeatureCollection",
+      features: raw.features.filter(f => f.properties?.valid_time === bestTime)
+    } as FeatureCollection;
+  }, [sourceData.weather, timelineOffsetHours]);
+
   useEffect(() => {
     const currentJob = jobInfo;
     const currentCamera = cameraStation;
@@ -870,14 +900,17 @@ export default function OperationsPage() {
       const src = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
       if (!src) continue;
       try {
-        const payload = id === "satellites" ? satelliteDisplayData : data;
+        let payload = data;
+        if (id === "satellites") payload = satelliteDisplayData;
+        if (id === "weather") payload = weatherDisplayData;
+        
         src.setData(payload);
         console.info(`[map] source ${sourceId} setData — features=${(payload as any).features?.length ?? 0}`);
       } catch (err) {
         console.warn(`[map] failed to setData for ${sourceId}`, err);
       }
     }
-  }, [mapReady, satelliteDisplayData, sourceData]);
+  }, [mapReady, satelliteDisplayData, weatherDisplayData, sourceData]);
 
   useEffect(() => {
     if (!mapReady || !aoi || !jobInfo) return;
@@ -1035,7 +1068,7 @@ export default function OperationsPage() {
   // The map already shows per-point wind arrows; the panel shows one
   // averaged value per metric so the operator gets a single summary number.
   const weatherAverages = useMemo<WeatherAverages>(() => {
-    const features = sourceData.weather?.features ?? [];
+    const features = weatherDisplayData?.features ?? [];
     if (features.length === 0) return EMPTY_WEATHER_AVERAGES;
 
     const collect: Record<string, number[]> = {};
@@ -1090,7 +1123,7 @@ export default function OperationsPage() {
       cloudHeight: linMean(collect.cloudcover_high_pct),
       visibility:  linMean(collect.visibility_m),
     };
-  }, [sourceData.weather]);
+  }, [weatherDisplayData]);
 
   useEffect(() => {
     if (!mapReady) return;
