@@ -1,13 +1,23 @@
-"""Redis-backed job store.
+"""Redis-backed job store — tracks fetch job state only.
 
-Metadata and layer data are stored under separate keys so that updating
-job status never requires re-serialising large GeoJSON payloads.
+Actual data lives on disk under src/data/{aoi_id}/.
+Redis holds only the transient job state needed during a fetch operation.
 
-Keys:
-    job:{job_id}               → { status, stages, created_at }
-    job:{job_id}:layer:{name}  → GeoJSON FeatureCollection (one key per layer)
+Job shape in Redis (key: job:{job_id}):
+{
+    "job_id":   "uuid",
+    "aoi_id":   "uuid",
+    "status":   "pending | running | completed | error",
+    "stages": {
+        "weather":        "pending | running | done | error",
+        "water":          "pending | running | done | error",
+        "land":           "pending | running | done | error",
+        "infrastructure": "pending | running | done | error"
+    },
+    "created_at": "<ISO timestamp>"
+}
 
-Both keys share the same TTL so they expire together.
+TTL is short — jobs are transient. Data persistence is handled by the filesystem.
 """
 
 import json
@@ -18,21 +28,19 @@ from datetime import datetime, timezone
 import redis.asyncio as aioredis
 
 _REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-_JOB_TTL = 60 * 60 * 2  # 2 hours
+_JOB_TTL = 60 * 60  # 1 hour — jobs are transient, data lives on disk
 
 _redis: aioredis.Redis = aioredis.from_url(_REDIS_URL, decode_responses=True)
 
 
-def new_job_id() -> str:
+def new_id() -> str:
     return str(uuid.uuid4())
 
 
-# ---------------------------------------------------------------------------
-# Job metadata
-# ---------------------------------------------------------------------------
-
-async def create_job(job_id: str, stage_names: list[str]) -> None:
+async def create_job(job_id: str, aoi_id: str, stage_names: list[str]) -> None:
     job = {
+        "job_id": job_id,
+        "aoi_id": aoi_id,
         "status": "pending",
         "stages": {name: "pending" for name in stage_names},
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -59,16 +67,3 @@ async def set_stage_status(job_id: str, stage: str, status: str) -> None:
         return
     job["stages"][stage] = status
     await _redis.set(f"job:{job_id}", json.dumps(job), ex=_JOB_TTL)
-
-
-# ---------------------------------------------------------------------------
-# Layer data (stored separately from job metadata)
-# ---------------------------------------------------------------------------
-
-async def store_layer(job_id: str, layer_name: str, geojson: dict) -> None:
-    await _redis.set(f"job:{job_id}:layer:{layer_name}", json.dumps(geojson), ex=_JOB_TTL)
-
-
-async def get_layer(job_id: str, layer_name: str) -> dict | None:
-    raw = await _redis.get(f"job:{job_id}:layer:{layer_name}")
-    return json.loads(raw) if raw else None

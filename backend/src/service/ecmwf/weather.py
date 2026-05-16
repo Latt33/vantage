@@ -1,132 +1,202 @@
-"""Weather forecast from ECMWF IFS via Open-Meteo.
+"""Weather forecast from ECMWF IFS via Open-Meteo — area grid coverage.
 
-Open-Meteo (https://open-meteo.com) is a European open-source weather API
-hosted in Germany. It proxies ECMWF IFS model output as JSON with no
-registration or API key required.
+Fetches a 3-day hourly forecast for a regular grid of points within the
+bounding box, not just the centroid. ECMWF IFS resolution is ~0.25° (~28 km),
+so grid points are spaced at 0.25° intervals.
 
-All operationally relevant parameters are fetched in a single request.
-The ECMWF IFS model runs at 0.25° (~28 km) resolution globally.
+All variables are fetched in a single Open-Meteo request per grid point.
+Open-Meteo accepts an array of lat/lon pairs, returning one result per point.
+
+Output is stored as a WeatherGrid JSON (not GeoJSON) since the data is
+inherently a 3-D field (lat × lon × time), not a collection of discrete features.
+
+Output files:
+    {aoi_id}/weather/forecast.json   — WeatherGrid structure
+    {aoi_id}/weather/meta.json
+
+WeatherGrid schema:
+    {
+        "type": "WeatherGrid",
+        "source": "...",
+        "model": "ecmwf_ifs04",
+        "grid": {
+            "points": [{"lat": ..., "lon": ...}, ...],
+            "times":  ["2024-01-01T00:00", ...]
+        },
+        "variables": {
+            "wind_speed_ms": [[point0_t0, point0_t1, ...], [point1_t0, ...]],
+            ...
+        }
+    }
+
+Indexing: variables[var][point_index][time_index]
 
 Source model: ECMWF IFS (European Centre for Medium-Range Weather Forecasts)
-API docs:     https://open-meteo.com/en/docs
+Proxy API:    Open-Meteo (https://open-meteo.com) — EU-hosted, no key required
 """
 
 import logging
+import math
 
 from src.service._shared.bbox import BBox
 from src.service._shared.client import client
-from src.service._shared.geojson import feature, feature_collection, point
+from src.service._shared.storage import category_file, write_category_meta, write_json
 
 logger = logging.getLogger(__name__)
 
 _OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
+_GRID_RESOLUTION = 0.25   # degrees — matches ECMWF IFS native resolution
+_MAX_POINTS = 100         # guard against very large bboxes
 
-# All parameters fetched in one request.
-# Grouped by operational relevance for readability.
 _HOURLY_PARAMS = [
     # Mobility / trafficability
-    "precipitation",            # mm — rain/sleet
-    "snowfall",                 # cm — fresh snow
-    "snow_depth",               # m — total snow on ground
-    "soil_moisture_0_to_1cm",   # m³/m³ — surface saturation (off-road trafficability)
-    "rain",                     # mm — rain only (separate from snow)
+    "precipitation",
+    "rain",
+    "snowfall",
+    "snow_depth",
+    "soil_moisture_0_to_1cm",
     # Air operations / surveillance
-    "windspeed_10m",            # m/s
-    "winddirection_10m",        # degrees from north (meteorological)
-    "windgusts_10m",            # m/s — peak gust
-    "visibility",               # m
-    "cloudcover",               # % total
-    "cloudcover_low",           # % below 2 km (relevant for rotary-wing ops)
+    "windspeed_10m",
+    "winddirection_10m",
+    "windgusts_10m",
+    "visibility",
+    "cloudcover",
+    "cloudcover_low",
     # Personnel / equipment
-    "temperature_2m",           # °C
-    "apparent_temperature",     # °C felt temperature
-    "relativehumidity_2m",      # %
-    "dewpoint_2m",              # °C — fog/frost risk indicator
-    "surface_pressure",         # hPa — pressure trend
-    "freezinglevel_height",     # m — 0°C isotherm altitude
+    "temperature_2m",
+    "apparent_temperature",
+    "relativehumidity_2m",
+    "dewpoint_2m",
+    "surface_pressure",
+    "freezinglevel_height",
 ]
 
+# Mapping from Open-Meteo param name to output key name
+_PARAM_RENAME: dict[str, str] = {
+    "windspeed_10m":          "wind_speed_ms",
+    "winddirection_10m":      "wind_direction_deg",
+    "windgusts_10m":          "wind_gust_ms",
+    "precipitation":          "precipitation_mm",
+    "rain":                   "rain_mm",
+    "snowfall":               "snowfall_cm",
+    "snow_depth":             "snow_depth_m",
+    "soil_moisture_0_to_1cm": "soil_moisture_m3m3",
+    "visibility":             "visibility_m",
+    "cloudcover":             "cloudcover_pct",
+    "cloudcover_low":         "cloudcover_low_pct",
+    "temperature_2m":         "temperature_c",
+    "apparent_temperature":   "apparent_temperature_c",
+    "relativehumidity_2m":    "humidity_pct",
+    "dewpoint_2m":            "dewpoint_c",
+    "surface_pressure":       "pressure_hpa",
+    "freezinglevel_height":   "freezing_level_m",
+}
 
-def _centroid(bbox: BBox) -> tuple[float, float]:
-    return (bbox.min_lon + bbox.max_lon) / 2, (bbox.min_lat + bbox.max_lat) / 2
+
+def _grid_points(bbox: BBox) -> list[tuple[float, float]]:
+    """Generate lat/lon grid points within bbox at ECMWF resolution."""
+    res = _GRID_RESOLUTION
+
+    def _snap_up(v: float) -> float:
+        return math.ceil(v / res) * res
+
+    points: list[tuple[float, float]] = []
+    lat = _snap_up(bbox.min_lat)
+    while lat <= bbox.max_lat + 1e-9:
+        lon = _snap_up(bbox.min_lon)
+        while lon <= bbox.max_lon + 1e-9:
+            points.append((round(lat, 6), round(lon, 6)))
+            lon = round(lon + res, 6)
+        lat = round(lat + res, 6)
+
+    # If bbox is smaller than one grid cell, fall back to centroid
+    if not points:
+        clat = round((bbox.min_lat + bbox.max_lat) / 2, 6)
+        clon = round((bbox.min_lon + bbox.max_lon) / 2, 6)
+        points = [(clat, clon)]
+
+    return points[:_MAX_POINTS]
 
 
-async def fetch_weather(bbox: BBox) -> dict:
-    """Return a 3-day hourly ECMWF forecast for the BBox centroid.
-
-    Each GeoJSON feature represents one hour. The centroid point is used
-    because ECMWF IFS resolution (~28 km) makes per-point fetching within
-    a tactical bbox redundant — one forecast covers the whole area.
-    """
-    lon, lat = _centroid(bbox)
+async def fetch_weather(aoi_id: str, bbox: BBox) -> dict:
+    """Fetch area weather grid and write to disk. Returns a summary dict."""
+    points = _grid_points(bbox)
+    lats = [p[0] for p in points]
+    lons = [p[1] for p in points]
 
     params = {
-        "latitude": lat,
-        "longitude": lon,
-        "hourly": ",".join(_HOURLY_PARAMS),
-        "forecast_days": 3,
+        "latitude":       ",".join(str(v) for v in lats),
+        "longitude":      ",".join(str(v) for v in lons),
+        "hourly":         ",".join(_HOURLY_PARAMS),
+        "forecast_days":  3,
         "windspeed_unit": "ms",
-        "models": "ecmwf_ifs04",
-        "timezone": "Europe/Helsinki",
+        "models":         "ecmwf_ifs04",
+        "timezone":       "Europe/Helsinki",
     }
 
     try:
         resp = await client.get(_OPEN_METEO_URL, params=params)
         resp.raise_for_status()
-        data = resp.json()
+        raw = resp.json()
 
-        hourly = data.get("hourly", {})
-        times = hourly.get("time", [])
+        # Normalise: single point returns dict, multiple returns list
+        results: list[dict] = raw if isinstance(raw, list) else [raw]
 
-        def _val(key: str, i: int):
-            col = hourly.get(key, [])
-            return col[i] if i < len(col) else None
+        # Times are identical across all points — take from first
+        times: list[str] = results[0].get("hourly", {}).get("time", [])
 
-        features = [
-            feature(
-                point(lon, lat),
-                {
-                    "time": t,
-                    # Mobility
-                    "precipitation_mm":         _val("precipitation", i),
-                    "rain_mm":                  _val("rain", i),
-                    "snowfall_cm":              _val("snowfall", i),
-                    "snow_depth_m":             _val("snow_depth", i),
-                    "soil_moisture_m3m3":       _val("soil_moisture_0_to_1cm", i),
-                    # Air operations
-                    "wind_speed_ms":            _val("windspeed_10m", i),
-                    "wind_direction_deg":        _val("winddirection_10m", i),
-                    "wind_gust_ms":             _val("windgusts_10m", i),
-                    "visibility_m":             _val("visibility", i),
-                    "cloudcover_pct":           _val("cloudcover", i),
-                    "cloudcover_low_pct":       _val("cloudcover_low", i),
-                    # Personnel / equipment
-                    "temperature_c":            _val("temperature_2m", i),
-                    "apparent_temperature_c":   _val("apparent_temperature", i),
-                    "humidity_pct":             _val("relativehumidity_2m", i),
-                    "dewpoint_c":               _val("dewpoint_2m", i),
-                    "pressure_hpa":             _val("surface_pressure", i),
-                    "freezing_level_m":         _val("freezinglevel_height", i),
-                },
-            )
-            for i, t in enumerate(times)
-        ]
+        # Build variables dict: var_name → list-per-point of time-series lists
+        variables: dict[str, list[list]] = {
+            _PARAM_RENAME.get(param, param): []
+            for param in _HOURLY_PARAMS
+        }
 
+        grid_points_out: list[dict] = []
+        for result in results:
+            hourly = result.get("hourly", {})
+            grid_points_out.append({
+                "lat": result.get("latitude"),
+                "lon": result.get("longitude"),
+            })
+            for param in _HOURLY_PARAMS:
+                key = _PARAM_RENAME.get(param, param)
+                variables[key].append(hourly.get(param, []))
+
+        forecast = {
+            "type": "WeatherGrid",
+            "source": "Open-Meteo / ECMWF IFS",
+            "model": "ecmwf_ifs04",
+            "grid": {
+                "points": grid_points_out,
+                "times": times,
+            },
+            "variables": variables,
+        }
+
+        write_json(category_file(aoi_id, "weather", "forecast.json"), forecast)
         logger.info(
-            "ECMWF weather: %d hourly steps for centroid %.4f,%.4f",
-            len(features), lat, lon,
+            "ECMWF weather: %d grid points × %d time steps → forecast.json",
+            len(grid_points_out), len(times),
         )
-        fc = feature_collection(features, source="Open-Meteo / ECMWF IFS")
-        fc["confidence"] = "high"
-        return fc
+
+        write_category_meta(
+            aoi_id, "weather",
+            source="Open-Meteo / ECMWF IFS",
+            confidence="high",
+            feature_counts={"grid_points": len(grid_points_out), "time_steps": len(times)},
+        )
+        return {
+            "source": "Open-Meteo / ECMWF IFS",
+            "grid_points": len(grid_points_out),
+            "time_steps": len(times),
+        }
 
     except Exception as exc:
         logger.warning("ECMWF weather fetch failed: %s", exc)
-        return {
-            "type": "FeatureCollection",
-            "features": [],
-            "source": "Open-Meteo / ECMWF IFS",
-            "confidence": "low",
-            "status": "error",
-            "error": str(exc),
-        }
+        write_category_meta(
+            aoi_id, "weather",
+            source="Open-Meteo / ECMWF IFS",
+            confidence="low",
+            feature_counts={},
+        )
+        return {"source": "Open-Meteo / ECMWF IFS", "error": str(exc)}
