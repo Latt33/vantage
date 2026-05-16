@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import maplibregl from "maplibre-gl";
-import type { Feature, FeatureCollection, Geometry } from "geojson";
+import type { FeatureCollection } from "geojson";
 import { BoundingBox, LayerConfig, LayerId, LayerSection, WeatherAverages } from "../types";
 import { bboxToArea, setArea } from "../area";
 import { API_BASE_URL, MAPTILER_KEY } from "../config";
@@ -30,33 +30,9 @@ const SOURCE_ACCENTS: Record<string, string> = {
   infra_rail:  "#d47c2f",
   cellular:    "#2a9d8a",
   traffic_cameras: "#e8622a",
-  satellites:  "#8060c8",
 };
 
 const EMPTY_FC: FeatureCollection = { type: "FeatureCollection", features: [] };
-
-const SATELLITE_COMPASS_BEARINGS: Record<string, number> = {
-  N: 0,
-  NNE: 22.5,
-  NE: 45,
-  ENE: 67.5,
-  E: 90,
-  ESE: 112.5,
-  SE: 135,
-  SSE: 157.5,
-  S: 180,
-  SSW: 202.5,
-  SW: 225,
-  WSW: 247.5,
-  W: 270,
-  WNW: 292.5,
-  NW: 315,
-  NNW: 337.5,
-};
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
 
 function toEpochMs(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -73,100 +49,6 @@ function toEpochMs(value: unknown): number | null {
     return Number.isNaN(parsed) ? null : parsed;
   }
   return null;
-}
-
-function toBearingDeg(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return ((value % 360) + 360) % 360;
-  }
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim().toUpperCase();
-  if (!trimmed) return null;
-  if (trimmed in SATELLITE_COMPASS_BEARINGS) {
-    return SATELLITE_COMPASS_BEARINGS[trimmed];
-  }
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? ((parsed % 360) + 360) % 360 : null;
-}
-
-function projectPoint(
-  lon: number,
-  lat: number,
-  bearingDeg: number,
-  distanceMeters: number,
-): [number, number] {
-  const earthRadiusMeters = 6_371_000;
-  const angularDistance = distanceMeters / earthRadiusMeters;
-  const bearingRad = (bearingDeg * Math.PI) / 180;
-  const latRad = (lat * Math.PI) / 180;
-  const lonRad = (lon * Math.PI) / 180;
-
-  const nextLat = Math.asin(
-    Math.max(-1, Math.min(1, Math.sin(latRad) * Math.cos(angularDistance) + Math.cos(latRad) * Math.sin(angularDistance) * Math.cos(bearingRad)))
-  );
-  const nextLon = lonRad + Math.atan2(
-    Math.sin(bearingRad) * Math.sin(angularDistance) * Math.cos(latRad),
-    Math.cos(angularDistance) - Math.sin(latRad) * Math.sin(nextLat),
-  );
-
-  return [((nextLon * 180) / Math.PI + 540) % 360 - 180, (nextLat * 180) / Math.PI];
-}
-
-function squareRing(centerLon: number, centerLat: number, sizeMeters: number): [number, number][] {
-  const half = sizeMeters / 2;
-  return [
-    projectPoint(centerLon, centerLat, 315, half),
-    projectPoint(centerLon, centerLat, 45, half),
-    projectPoint(centerLon, centerLat, 135, half),
-    projectPoint(centerLon, centerLat, 225, half),
-    projectPoint(centerLon, centerLat, 315, half),
-  ];
-}
-
-function buildSatelliteDisplayData(raw: FeatureCollection, aoi: BoundingBox | null, offsetHours: number): FeatureCollection {
-  if (!aoi) return EMPTY_FC;
-
-  const centerLon = (aoi.minLon + aoi.maxLon) / 2;
-  const centerLat = (aoi.minLat + aoi.maxLat) / 2;
-  const lonSpanMeters = Math.abs(aoi.maxLon - aoi.minLon) * 111_320 * Math.cos((centerLat * Math.PI) / 180);
-  const latSpanMeters = Math.abs(aoi.maxLat - aoi.minLat) * 111_320;
-  const trackRadius = Math.max(8_000, Math.max(lonSpanMeters, latSpanMeters) * 0.55);
-  const boxSize = Math.max(250, Math.max(lonSpanMeters, latSpanMeters) * 0.04);
-  const selectedMs = Date.now() + offsetHours * 3_600_000;
-
-  const features: Feature<Geometry>[] = [];
-  for (const feature of raw.features ?? []) {
-    const props = (feature.properties ?? {}) as Record<string, unknown>;
-    const startMs = toEpochMs(props.start_time ?? props.startUTC ?? props.startUtc);
-    const endMs = toEpochMs(props.end_time ?? props.endUTC ?? props.endUtc);
-    const startBearing = toBearingDeg(props.start_az_compass ?? props.startAzCompass ?? props.startAz ?? props.start_azimuth);
-    const endBearing = toBearingDeg(props.end_az_compass ?? props.endAzCompass ?? props.endAz ?? props.end_azimuth);
-
-    if (startMs === null || endMs === null || startBearing === null || endBearing === null) continue;
-
-    const startPoint = projectPoint(centerLon, centerLat, startBearing, trackRadius);
-    const endPoint = projectPoint(centerLon, centerLat, endBearing, trackRadius);
-
-    features.push({
-      type: "Feature",
-      geometry: { type: "LineString", coordinates: [startPoint, endPoint] },
-      properties: { ...props, kind: "track" },
-    } as Feature<Geometry>);
-
-    if (selectedMs < startMs || selectedMs > endMs || endMs <= startMs) continue;
-
-    const fraction = clamp((selectedMs - startMs) / (endMs - startMs), 0, 1);
-    const currentLon = startPoint[0] + (endPoint[0] - startPoint[0]) * fraction;
-    const currentLat = startPoint[1] + (endPoint[1] - startPoint[1]) * fraction;
-
-    features.push({
-      type: "Feature",
-      geometry: { type: "Polygon", coordinates: [squareRing(currentLon, currentLat, boxSize)] },
-      properties: { ...props, kind: "active", progress: fraction },
-    } as Feature<Geometry>);
-  }
-
-  return { type: "FeatureCollection", features };
 }
 
 const INITIAL_LAYERS: LayerConfig[] = SOURCES.map((s) => ({
@@ -196,7 +78,6 @@ const MAP_SOURCE_IDS: Record<string, string> = {
   infra_rail:  "infra-rail-src",
   cellular:    "cellular-src",
   traffic_cameras: "traffic-cameras-src",
-  satellites:  "satellites-src",
 };
 
 // MapLibre layer ids that each data source drives
@@ -211,7 +92,6 @@ const MAP_LAYER_IDS: Record<string, string[]> = {
   infra_rail:  ["infra-rail-line"],
   cellular:    ["cellular-halo", "cellular-circle"],
   traffic_cameras: ["traffic-camera-symbol"],
-  satellites:  ["satellites-track-line", "satellites-box-fill"],
 };
 
 const MAP_LAYER_OPACITY_PROP: Record<string, "fill-opacity" | "line-opacity" | "circle-opacity" | "icon-opacity" | "text-opacity" | "raster-opacity"> = {
@@ -228,8 +108,6 @@ const MAP_LAYER_OPACITY_PROP: Record<string, "fill-opacity" | "line-opacity" | "
   "cellular-halo":          "circle-opacity",
   "cellular-circle":        "circle-opacity",
   "traffic-camera-symbol":  "icon-opacity",
-  "satellites-track-line":  "line-opacity",
-  "satellites-box-fill":    "fill-opacity",
 };
 
 const EMPTY_WEATHER_AVERAGES: WeatherAverages = {
@@ -254,7 +132,6 @@ const SOURCE_STAGE: Record<string, string> = {
   infra_rail:  "rail",
   cellular:    "cellular",
   traffic_cameras: "traffic_cameras",
-  satellites:  "satellites",
 };
 
 interface JobInfo {
@@ -334,7 +211,6 @@ export default function OperationsPage() {
     infra_rail:  EMPTY_FC,
     cellular:    EMPTY_FC,
     traffic_cameras: EMPTY_FC,
-    satellites:  EMPTY_FC,
   });
 
   const capabilityIds = useMemo(() => capabilities.map((c) => c.id), [capabilities]);
@@ -364,11 +240,6 @@ export default function OperationsPage() {
       metadata: { aoi_id: jobInfo.aoiId },
     };
   }, [aoi, jobInfo]);
-
-  const satelliteDisplayData = useMemo(
-    () => buildSatelliteDisplayData(sourceData.satellites, aoi, timelineOffsetHours),
-    [aoi, sourceData.satellites, timelineOffsetHours],
-  );
 
   const weatherDisplayData = useMemo(() => {
     const raw = sourceData.weather;
@@ -868,31 +739,6 @@ export default function OperationsPage() {
         },
       });
 
-      map.addSource(MAP_SOURCE_IDS.satellites, { type: "geojson", data: EMPTY_FC });
-      map.addLayer({
-        id: "satellites-track-line",
-        type: "line",
-        source: MAP_SOURCE_IDS.satellites,
-        layout: { visibility: "none" },
-        paint: {
-          "line-color": "#8060c8",
-          "line-width": 2.5,
-          "line-opacity": 0.9,
-        },
-      });
-      map.addLayer({
-        id: "satellites-box-fill",
-        type: "fill",
-        source: MAP_SOURCE_IDS.satellites,
-        layout: { visibility: "none" },
-        filter: ["==", ["geometry-type"], "Polygon"],
-        paint: {
-          "fill-color": "#c6b8ff",
-          "fill-opacity": 0.32,
-          "fill-outline-color": "#f0e9ff",
-        },
-      });
-
       setMapReady(true);
     });
 
@@ -917,7 +763,6 @@ export default function OperationsPage() {
       if (!src) continue;
       try {
         let payload = data;
-        if (id === "satellites") payload = satelliteDisplayData;
         if (id === "weather") payload = weatherDisplayData;
         
         src.setData(payload);
@@ -926,7 +771,7 @@ export default function OperationsPage() {
         console.warn(`[map] failed to setData for ${sourceId}`, err);
       }
     }
-  }, [mapReady, satelliteDisplayData, weatherDisplayData, sourceData]);
+  }, [mapReady, weatherDisplayData, sourceData]);
 
   useEffect(() => {
     if (!mapReady || !aoi || !jobInfo) return;

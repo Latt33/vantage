@@ -310,12 +310,6 @@ async function loadCellular(area: AreaContext, signal?: AbortSignal): Promise<Fe
   };
 }
 
-async function loadSatellites(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
-  const aoiId = getBackendAoiId(area);
-  const raw = await fetchJson(`/api/aoi/${aoiId}/satellites/passes`, signal);
-  return asFeatureCollection(raw);
-}
-
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 export const SOURCES: DataSource[] = [
@@ -333,7 +327,6 @@ export const SOURCES: DataSource[] = [
   // Surveillance
   { id: "cellular",         label: "Cell Towers",     sublabel: "RF coverage · Relays",     category: "surveillance",   hasData: false, load: loadCellular },
   { id: "traffic_cameras",   label: "Road Cameras",    sublabel: "Live weather cameras",     category: "surveillance",   hasData: false, load: loadTrafficCameras },
-  { id: "satellites",       label: "Satellites",      sublabel: "Recon window · Overhead",  category: "surveillance",   hasData: false, load: loadSatellites },
 ];
 
 export function getSource(id: string): DataSource | undefined {
