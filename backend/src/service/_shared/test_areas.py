@@ -28,17 +28,20 @@ TEST_AREAS: tuple[TestArea, ...] = (
     TestArea(
         aoi_id="test_archipelago_sea",
         name="Archipelago Sea",
-        bbox=BBox(min_lon=21.5, min_lat=59.8, max_lon=23.2, max_lat=60.5),
+        # ~50×50 km centred on the western archipelago (lat 60°: 0.9°lon ≈ 50 km)
+        bbox=BBox(min_lon=21.9, min_lat=59.9, max_lon=22.8, max_lat=60.35),
     ),
     TestArea(
         aoi_id="test_north_karelia",
         name="North Karelia",
-        bbox=BBox(min_lon=29.3, min_lat=62.2, max_lon=30.8, max_lat=63.4),
+        # ~50×50 km centred on Joensuu area (lat 62.8°: 1.0°lon ≈ 50 km)
+        bbox=BBox(min_lon=29.3, min_lat=62.55, max_lon=30.3, max_lat=63.0),
     ),
     TestArea(
         aoi_id="test_lapland_kasivarsi",
         name="Käsivarren Lappi",
-        bbox=BBox(min_lon=20.5, min_lat=68.0, max_lon=24.5, max_lat=70.1),
+        # ~50×50 km centred on Enontekiö (lat 69°: 1.3°lon ≈ 52 km)
+        bbox=BBox(min_lon=20.9, min_lat=68.75, max_lon=22.2, max_lat=69.2),
     ),
 )
 

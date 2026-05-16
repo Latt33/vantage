@@ -429,7 +429,7 @@ export default function OperationsPage() {
 
   function onApplyMissionWindow(cond: MissionConditionsUi) {
     setMissionConditions(cond);
-    setMissionWindows(buildPlaceholderWindows(cond));
+    setMissionWindows(buildPlaceholderWindows(cond, satTracks));
   }
 
   function onLayerChange(id: LayerId, patch: Partial<LayerConfig>) {
@@ -848,60 +848,31 @@ export default function OperationsPage() {
         },
       });
 
-      // Overpass points (within 100 km of AOI)
+      // Overpass points — separate source so time-slider filtering never touches
+      // the track-line source and can be updated cheaply on every slider tick.
+      // Satellite track labels — shown along each ground track line
       map.addLayer({
-        id: "satellite-overpass-halo",
-        type: "circle",
+        id: "satellite-tracks-label",
+        type: "symbol",
         source: "satellite-tracks-src",
-        filter: ["==", ["get", "feature_type"], "overpass"],
-        layout: { visibility: "none" },
-        paint: {
-          "circle-radius": 9,
-          "circle-color": constColorExpr,
-          "circle-opacity": 0.18,
-          "circle-stroke-width": 0,
+        filter: ["==", ["get", "feature_type"], "track"],
+        layout: {
+          visibility: "none",
+          "symbol-placement": "line",
+          "symbol-spacing": 300,
+          "text-field": ["get", "satellite_name"],
+          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+          "text-size": 10,
+          "text-offset": [0, -0.8],
+          "text-allow-overlap": false,
+          "text-ignore-placement": false,
+          "text-keep-upright": true,
         },
-      });
-      map.addLayer({
-        id: "satellite-overpass-dot",
-        type: "circle",
-        source: "satellite-tracks-src",
-        filter: ["==", ["get", "feature_type"], "overpass"],
-        layout: { visibility: "none" },
         paint: {
-          "circle-radius": 4,
-          "circle-color": constColorExpr,
-          "circle-opacity": 0.9,
-          "circle-stroke-color": "#000",
-          "circle-stroke-width": 0.8,
-        },
-      });
-
-      // Current satellite position (updated by time-slider)
-      map.addSource("satellite-cur-pos-src", { type: "geojson", data: EMPTY_FC });
-      map.addLayer({
-        id: "satellite-cur-pos-halo",
-        type: "circle",
-        source: "satellite-cur-pos-src",
-        layout: { visibility: "none" },
-        paint: {
-          "circle-radius": 14,
-          "circle-color": constColorExpr,
-          "circle-opacity": 0.25,
-          "circle-stroke-width": 0,
-        },
-      });
-      map.addLayer({
-        id: "satellite-cur-pos-dot",
-        type: "circle",
-        source: "satellite-cur-pos-src",
-        layout: { visibility: "none" },
-        paint: {
-          "circle-radius": 6,
-          "circle-color": constColorExpr,
-          "circle-opacity": 1,
-          "circle-stroke-color": "#fff",
-          "circle-stroke-width": 1.5,
+          "text-color": constColorExpr,
+          "text-halo-color": "rgba(0,0,0,0.85)",
+          "text-halo-width": 1.5,
+          "text-opacity": 0.9,
         },
       });
 
@@ -1424,7 +1395,70 @@ export default function OperationsPage() {
     return new Set([...activeSatConstellations].filter((c) => !withTracks.has(c)));
   }, [activeSatConstellations, satTracks, satTracksLoadState]);
 
-  // Push loaded satellite tracks into the MapLibre GeoJSON source.
+  // Next overpass per active constellation — same orbital-pass grouping as the map dots.
+  // Uses pass END time as the cutoff so the display stays stable throughout the brief
+  // 1–3 min crossing window. Picks the closest-approach point within each pass.
+  const nextOverpassByConstellation = useMemo(() => {
+    if (activeSatConstellations.size === 0) return {} as Record<string, { satellite_name: string; timestamp: string; distance_km: number }>;
+    const sliderMs = Date.now() + timelineOffsetHours * 3_600_000;
+    const PASS_GAP_MS = 60 * 60 * 1000;
+
+    type PassPoint = { timeMs: number; distKm: number; satName: string; timestamp: string };
+
+    // Collect overpass points per constellation → per NORAD ID.
+    const perConstSat = new Map<string, Map<string, PassPoint[]>>();
+    for (const feature of satTracks.features) {
+      const props = feature.properties as Record<string, unknown> | null;
+      if (!props || props.feature_type !== "overpass") continue;
+      const cid = props.constellation as string;
+      if (!activeSatConstellations.has(cid)) continue;
+      const norad = props.norad_id as string;
+      const timeMs = Date.parse(props.timestamp as string);
+      if (isNaN(timeMs)) continue;
+      if (!perConstSat.has(cid)) perConstSat.set(cid, new Map());
+      const satMap = perConstSat.get(cid)!;
+      if (!satMap.has(norad)) satMap.set(norad, []);
+      satMap.get(norad)!.push({ timeMs, distKm: (props.distance_km as number) ?? Infinity, satName: props.satellite_name as string, timestamp: props.timestamp as string });
+    }
+
+    const result: Record<string, { satellite_name: string; timestamp: string; distance_km: number }> = {};
+
+    for (const [cid, satMap] of perConstSat) {
+      // For each satellite, find its first upcoming pass (pass end >= sliderMs).
+      // Among all satellites in the constellation, pick the one whose pass starts earliest.
+      let best: { satName: string; timestamp: string; distKm: number; passStartMs: number } | null = null;
+
+      for (const points of satMap.values()) {
+        points.sort((a, b) => a.timeMs - b.timeMs);
+
+        // Group into orbital passes.
+        const passes: PassPoint[][] = [];
+        let cur: PassPoint[] = [];
+        for (const pt of points) {
+          if (cur.length === 0 || pt.timeMs - cur[cur.length - 1].timeMs <= PASS_GAP_MS) {
+            cur.push(pt);
+          } else { passes.push(cur); cur = [pt]; }
+        }
+        if (cur.length > 0) passes.push(cur);
+
+        // First pass whose end is still in the future.
+        for (const pass of passes) {
+          if (pass[pass.length - 1].timeMs < sliderMs) continue;
+          const closest = pass.reduce((a, b) => (a.distKm <= b.distKm ? a : b));
+          if (!best || pass[0].timeMs < best.passStartMs) {
+            best = { satName: closest.satName, timestamp: closest.timestamp, distKm: closest.distKm, passStartMs: pass[0].timeMs };
+          }
+          break;
+        }
+      }
+
+      if (best) result[cid] = { satellite_name: best.satName, timestamp: best.timestamp, distance_km: best.distKm };
+    }
+
+    return result;
+  }, [satTracks, activeSatConstellations, timelineOffsetHours]);
+
+  // Push loaded satellite tracks into the MapLibre GeoJSON source (full 72h, all constellations).
   useEffect(() => {
     if (!mapReady) return;
     const map = mapRef.current;
@@ -1432,6 +1466,39 @@ export default function OperationsPage() {
     const src = map.getSource("satellite-tracks-src") as maplibregl.GeoJSONSource | undefined;
     src?.setData(satTracks);
   }, [mapReady, satTracks]);
+
+
+  // Animate the satellite track lines with a flowing dash effect.
+  // We keep line-dasharray fixed at [4, 3] and animate line-dash-offset instead.
+  // Changing dasharray length each frame causes MapLibre to recompile shaders,
+  // which flickers / hides the layer — offset animation avoids that entirely.
+  useEffect(() => {
+    if (!mapReady || activeSatConstellations.size === 0) return;
+    const map = mapRef.current;
+    if (!map) return;
+
+    const PERIOD = 7; // DASH(4) + GAP(3)
+    const UNITS_PER_SECOND = 3;
+
+    let offset = 0;
+    let lastTs = performance.now();
+    let raf: number;
+
+    function animate(now: number) {
+      offset -= ((now - lastTs) / 1000) * UNITS_PER_SECOND;
+      // Keep offset in [-PERIOD, 0] to avoid float drift over long sessions.
+      if (offset < -PERIOD) offset += PERIOD;
+      lastTs = now;
+      const m = mapRef.current;
+      try {
+        m?.setPaintProperty("satellite-tracks-line", "line-dash-offset", offset);
+      } catch { /* layer may not exist yet on first tick */ }
+      raf = requestAnimationFrame(animate);
+    }
+
+    raf = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(raf);
+  }, [mapReady, activeSatConstellations]);
 
   // Show / hide satellite layers and filter by active constellations.
   useEffect(() => {
@@ -1442,77 +1509,19 @@ export default function OperationsPage() {
     const activeArr = Array.from(activeSatConstellations);
     const hasActive = activeArr.length > 0;
     const vis = hasActive ? "visible" : "none";
-    const filter: maplibregl.FilterSpecification = hasActive
+    // Track lines/labels filter by constellation (source has all constellations).
+    // Overpass and current-position sources are already pre-filtered by memos.
+    const trackFilter: maplibregl.FilterSpecification = hasActive
       ? ["in", ["get", "constellation"] as maplibregl.ExpressionSpecification, ["literal", activeArr] as maplibregl.ExpressionSpecification]
       : ["==", 1, 0];
 
-    for (const layerId of [
-      "satellite-tracks-line",
-      "satellite-overpass-halo",
-      "satellite-overpass-dot",
-      "satellite-cur-pos-halo",
-      "satellite-cur-pos-dot",
-    ]) {
+    for (const layerId of ["satellite-tracks-line", "satellite-tracks-label"]) {
       if (!map.getLayer(layerId)) continue;
       map.setLayoutProperty(layerId, "visibility", vis);
-      if (layerId !== "satellite-cur-pos-halo" && layerId !== "satellite-cur-pos-dot") {
-        map.setFilter(layerId, filter);
-      }
+      map.setFilter(layerId, trackFilter);
     }
   }, [mapReady, activeSatConstellations]);
 
-  // Update the "current satellite position" dot as the time slider moves.
-  useEffect(() => {
-    if (!mapReady) return;
-    const map = mapRef.current;
-    if (!map) return;
-
-    const src = map.getSource("satellite-cur-pos-src") as maplibregl.GeoJSONSource | undefined;
-    if (!src) return;
-
-    const targetMs = Date.now() + timelineOffsetHours * 3_600_000;
-
-    const curFeatures: FeatureCollection["features"] = [];
-    for (const feature of satTracks.features) {
-      const props = feature.properties as Record<string, unknown> | null;
-      if (!props || props["feature_type"] !== "track") continue;
-      const constellation = props["constellation"] as string;
-      if (!activeSatConstellations.has(constellation)) continue;
-
-      const timestamps = props["timestamps"] as string[] | undefined;
-      if (!timestamps || timestamps.length === 0) continue;
-      const geom = feature.geometry;
-      let coords: [number, number][] = [];
-      if (geom.type === "LineString") {
-        coords = geom.coordinates as [number, number][];
-      } else if (geom.type === "MultiLineString") {
-        coords = (geom.coordinates as [number, number][][]).flat();
-      }
-      if (coords.length === 0 || coords.length !== timestamps.length) continue;
-
-      let bestIdx = 0;
-      let bestDiff = Infinity;
-      for (let i = 0; i < timestamps.length; i++) {
-        const diff = Math.abs(new Date(timestamps[i]).getTime() - targetMs);
-        if (diff < bestDiff) { bestDiff = diff; bestIdx = i; }
-      }
-
-      const altitudes = props["altitudes_km"] as number[] | undefined;
-      curFeatures.push({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: coords[bestIdx] },
-        properties: {
-          constellation,
-          satellite_name: props["satellite_name"],
-          norad_id: props["norad_id"],
-          timestamp: timestamps[bestIdx],
-          altitude_km: altitudes?.[bestIdx] ?? null,
-        },
-      });
-    }
-
-    src.setData({ type: "FeatureCollection", features: curFeatures });
-  }, [mapReady, satTracks, activeSatConstellations, timelineOffsetHours]);
 
   useEffect(() => {
     if (!mapReady) return;
@@ -1701,6 +1710,12 @@ export default function OperationsPage() {
             terrainElevRange={terrainElevRange}
             derivedSelected={derivedSelected}
           />
+          <SatOverpassPanel
+            activeSatConstellations={activeSatConstellations}
+            nextOverpassByConstellation={nextOverpassByConstellation}
+            satTracksLoadState={satTracksLoadState}
+            timelineOffsetHours={timelineOffsetHours}
+          />
         </div>
 
         <LayerPanel
@@ -1765,7 +1780,10 @@ export default function OperationsPage() {
  * the operator presses Apply. Replace with the real
  * /api/mission-window/analyse response once it's wired up.
  */
-function buildPlaceholderWindows(cond: MissionConditionsUi): MissionWindowBand[] {
+const OPTICAL_CONSTELLATIONS = new Set(["sentinel_2", "landsat_9", "planet_skysat"]);
+const SAR_CONSTELLATIONS     = new Set(["sentinel_1", "iceye_x"]);
+
+function buildPlaceholderWindows(cond: MissionConditionsUi, satTracks: FeatureCollection): MissionWindowBand[] {
   const horizon = Math.max(1, cond.lookaheadHours);
 
   // Score each ACTIVE atmospheric threshold as a 0..1 "permissiveness".
@@ -1805,6 +1823,40 @@ function buildPlaceholderWindows(cond: MissionConditionsUi): MissionWindowBand[]
     const kind: MissionWindowBand["kind"] = goodChance >= cond.minScore ? "good" : "uncertain";
 
     bands.push({ startHour: start, endHour: end, kind });
+  }
+
+  // Annotate bands with satellite overpass coverage when checks are enabled.
+  if (cond.satOpticalEnabled || cond.satSarEnabled) {
+    const nowMs = Date.now();
+
+    // Collect overpass timestamps (ms) by sensor type from the trajectory cache.
+    const opticalTimes: number[] = [];
+    const sarTimes: number[] = [];
+    for (const feat of satTracks.features) {
+      const p = feat.properties;
+      if (!p || p.feature_type !== "overpass") continue;
+      const ts = p.timestamp ? Date.parse(p.timestamp as string) : NaN;
+      if (isNaN(ts)) continue;
+      if (OPTICAL_CONSTELLATIONS.has(p.constellation as string)) opticalTimes.push(ts);
+      if (SAR_CONSTELLATIONS.has(p.constellation as string))     sarTimes.push(ts);
+    }
+
+    for (const band of bands) {
+      const bandStartMs = nowMs + band.startHour * 3_600_000;
+      const bandEndMs   = nowMs + band.endHour   * 3_600_000;
+
+      if (cond.satOpticalEnabled) {
+        const lo = bandStartMs - cond.satOpticalBeforeH * 3_600_000;
+        const hi = bandEndMs   + cond.satOpticalAfterH  * 3_600_000;
+        band.satOpticalPass = opticalTimes.some((t) => t >= lo && t <= hi);
+      }
+
+      if (cond.satSarEnabled) {
+        const lo = bandStartMs - cond.satSarBeforeH * 3_600_000;
+        const hi = bandEndMs   + cond.satSarAfterH  * 3_600_000;
+        band.satSarPass = sarTimes.some((t) => t >= lo && t <= hi);
+      }
+    }
   }
 
   return bands;
@@ -1970,6 +2022,94 @@ function MapLegend({
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── Satellite overpass summary panel ─────────────────────────────────────────
+
+function formatRelativeTime(isoTimestamp: string, referenceMs: number): string {
+  const diffMs = new Date(isoTimestamp).getTime() - referenceMs;
+  if (diffMs <= 0) return "now";
+  const totalMin = Math.round(diffMs / 60_000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function formatUtcTime(isoTimestamp: string): string {
+  const d = new Date(isoTimestamp);
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
+  return `${dd}/${mo} ${hh}:${mm}Z`;
+}
+
+function SatOverpassPanel({
+  activeSatConstellations,
+  nextOverpassByConstellation,
+  satTracksLoadState,
+  timelineOffsetHours,
+}: {
+  activeSatConstellations: Set<string>;
+  nextOverpassByConstellation: Record<string, { satellite_name: string; timestamp: string; distance_km: number }>;
+  satTracksLoadState: "idle" | "loading" | "done";
+  timelineOffsetHours: number;
+}) {
+  const sliderMs = Date.now() + timelineOffsetHours * 3_600_000;
+  if (activeSatConstellations.size === 0) return null;
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 48,
+        left: 12,
+        background: "rgba(14, 16, 20, 0.88)",
+        border: "1px solid rgba(255,255,255,0.10)",
+        borderRadius: 6,
+        padding: "8px 10px",
+        fontFamily: "var(--font-data)",
+        fontSize: 11,
+        color: "var(--color-text-secondary)",
+        pointerEvents: "none",
+        minWidth: 200,
+        maxWidth: 260,
+      }}
+    >
+      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--color-text-dim)", marginBottom: 6 }}>
+        Next Overpass (AoI)
+      </div>
+      {satTracksLoadState === "loading" ? (
+        <div style={{ color: "var(--color-text-dim)", fontSize: 10 }}>Loading…</div>
+      ) : (
+        Array.from(activeSatConstellations).map((cid) => {
+          const entry = nextOverpassByConstellation[cid];
+          const color = CONSTELLATION_COLORS[cid] ?? CONSTELLATION_COLOR_FALLBACK;
+          const label = CONSTELLATION_LABELS[cid] ?? cid;
+          return (
+            <div key={cid} style={{ display: "flex", alignItems: "flex-start", gap: 7, marginBottom: 6 }}>
+              <div style={{ width: 3, alignSelf: "stretch", borderRadius: 2, background: color, flexShrink: 0, marginTop: 1 }} />
+              <div>
+                <div style={{ color, fontWeight: 700, fontSize: 10, letterSpacing: "0.05em" }}>{label}</div>
+                {entry ? (
+                  <>
+                    <div style={{ color: "var(--color-text-primary)", fontSize: 11 }}>
+                      {entry.satellite_name} — <span style={{ color }}>{formatRelativeTime(entry.timestamp, sliderMs)}</span>
+                    </div>
+                    <div style={{ color: "var(--color-text-dim)", fontSize: 10 }}>
+                      {formatUtcTime(entry.timestamp)} · {entry.distance_km} km ground range
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ color: "var(--color-text-dim)", fontSize: 10 }}>No pass in 72h</div>
+                )}
+              </div>
+            </div>
+          );
+        })
       )}
     </div>
   );

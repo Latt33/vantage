@@ -9,6 +9,9 @@ export interface MissionWindowBand {
   startHour: number;
   endHour: number;
   kind: "good" | "uncertain";
+  /** null = check not requested; true/false = pass/fail */
+  satOpticalPass?: boolean | null;
+  satSarPass?: boolean | null;
 }
 
 interface Props {
@@ -280,10 +283,16 @@ export default function TimeSlider({
             w.kind === "good"
               ? "rgba(150, 220, 150, 0.85)"
               : "rgba(232, 200, 60, 0.85)";
+          const optChecked = w.satOpticalPass !== undefined && w.satOpticalPass !== null;
+          const sarChecked = w.satSarPass !== undefined && w.satSarPass !== null;
+          const satSuffix =
+            optChecked || sarChecked
+              ? ` · ${optChecked ? `OPT ${w.satOpticalPass ? "✓" : "✗"}` : ""}${optChecked && sarChecked ? "  " : ""}${sarChecked ? `SAR ${w.satSarPass ? "✓" : "✗"}` : ""}`
+              : "";
           return (
             <div
               key={`band-${i}`}
-              title={`${w.kind === "good" ? "Suitable" : "Uncertain"} window: +${w.startHour}h → +${w.endHour}h`}
+              title={`${w.kind === "good" ? "Suitable" : "Uncertain"} window: +${w.startHour}h → +${w.endHour}h${satSuffix}`}
               style={{
                 position: "absolute",
                 left: `${leftPct}%`,
@@ -294,8 +303,34 @@ export default function TimeSlider({
                 borderTop: `1px solid ${border}`,
                 borderBottom: `1px solid ${border}`,
                 pointerEvents: "none",
+                overflow: "hidden",
               }}
-            />
+            >
+              {(optChecked || sarChecked) && (
+                <div style={{ position: "absolute", top: 1, left: 3, display: "flex", gap: 3, alignItems: "center" }}>
+                  {optChecked && (
+                    <span
+                      title={w.satOpticalPass ? "Optical pass found" : "No optical pass"}
+                      style={{
+                        width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
+                        background: w.satOpticalPass ? "#78c878" : "#e84040",
+                        boxShadow: "0 0 2px rgba(0,0,0,0.6)",
+                      }}
+                    />
+                  )}
+                  {sarChecked && (
+                    <span
+                      title={w.satSarPass ? "SAR pass found" : "No SAR pass"}
+                      style={{
+                        width: 6, height: 6, borderRadius: "2px", flexShrink: 0,
+                        background: w.satSarPass ? "#78c878" : "#e84040",
+                        boxShadow: "0 0 2px rgba(0,0,0,0.6)",
+                      }}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
           );
         })}
 

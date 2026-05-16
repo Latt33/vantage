@@ -11,6 +11,9 @@ services:
       - REDIS_URL=redis://redis:6379
     volumes:
       - ./data:/app/data
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     depends_on:
       redis:
         condition: service_healthy

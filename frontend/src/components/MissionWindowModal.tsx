@@ -31,6 +31,14 @@ export interface MissionConditionsUi {
   // Analysis parameters
   lookaheadHours: number;
   minScore:       number;
+
+  // Satellite surveillance checks
+  satOpticalEnabled: boolean;
+  satOpticalBeforeH: number;   // hours to look back before the window start
+  satOpticalAfterH:  number;   // hours to look ahead past the window end
+  satSarEnabled:     boolean;
+  satSarBeforeH:     number;
+  satSarAfterH:      number;
 }
 
 export const VISIBILITY_STEPS_M = [50, 100, 200, 500, 1000, 5000, 10000, 20000] as const;
@@ -52,6 +60,13 @@ export const DEFAULT_CONDITIONS: MissionConditionsUi = {
 
   lookaheadHours: 72,
   minScore:       0.6,
+
+  satOpticalEnabled: false,
+  satOpticalBeforeH: 2,
+  satOpticalAfterH:  2,
+  satSarEnabled:     false,
+  satSarBeforeH:     2,
+  satSarAfterH:      2,
 };
 
 // Red → yellow → green gradient for "below = better" (wind, gust, cloud).
@@ -223,6 +238,76 @@ export default function MissionWindowModal({ open, initial, onClose, onApply }: 
               gradient={GRADIENT_ABOVE}
               onChange={(v) => setCond((c) => ({ ...c, minLineOfSightKm: v }))}
             />
+          </Section>
+
+          {/* ── Satellite surveillance ────────────────────────────────── */}
+          <Section title="Satellite Surveillance" subtitle="Require an overpass within a time window around each mission window">
+            <ToggleRow
+              label="Optical (Sentinel-2 · SkySat · Landsat 9)"
+              activeLabel="Required"
+              inactiveLabel="Not required"
+              enabled={cond.satOpticalEnabled}
+              onToggle={(v) => setCond((c) => ({ ...c, satOpticalEnabled: v }))}
+            />
+            {cond.satOpticalEnabled && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <GradientRow
+                  label="Look-back (before window)"
+                  enabled
+                  showToggle={false}
+                  value={cond.satOpticalBeforeH}
+                  min={0} max={6} step={1}
+                  format={(v) => v === 0 ? "T+0 only" : `T−${Math.round(v)}h`}
+                  gradient={GRADIENT_NEUTRAL}
+                  onChange={(v) => setCond((c) => ({ ...c, satOpticalBeforeH: Math.round(v) }))}
+                />
+                <GradientRow
+                  label="Look-ahead (after window)"
+                  enabled
+                  showToggle={false}
+                  value={cond.satOpticalAfterH}
+                  min={0} max={6} step={1}
+                  format={(v) => v === 0 ? "T+0 only" : `T+${Math.round(v)}h`}
+                  gradient={GRADIENT_NEUTRAL}
+                  onChange={(v) => setCond((c) => ({ ...c, satOpticalAfterH: Math.round(v) }))}
+                />
+              </div>
+            )}
+            <ToggleRow
+              label="SAR (Sentinel-1 · ICEYE)"
+              activeLabel="Required"
+              inactiveLabel="Not required"
+              enabled={cond.satSarEnabled}
+              onToggle={(v) => setCond((c) => ({ ...c, satSarEnabled: v }))}
+            />
+            {cond.satSarEnabled && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <GradientRow
+                  label="Look-back (before window)"
+                  enabled
+                  showToggle={false}
+                  value={cond.satSarBeforeH}
+                  min={0} max={6} step={1}
+                  format={(v) => v === 0 ? "T+0 only" : `T−${Math.round(v)}h`}
+                  gradient={GRADIENT_NEUTRAL}
+                  onChange={(v) => setCond((c) => ({ ...c, satSarBeforeH: Math.round(v) }))}
+                />
+                <GradientRow
+                  label="Look-ahead (after window)"
+                  enabled
+                  showToggle={false}
+                  value={cond.satSarAfterH}
+                  min={0} max={6} step={1}
+                  format={(v) => v === 0 ? "T+0 only" : `T+${Math.round(v)}h`}
+                  gradient={GRADIENT_NEUTRAL}
+                  onChange={(v) => setCond((c) => ({ ...c, satSarAfterH: Math.round(v) }))}
+                />
+              </div>
+            )}
+            <HintText>
+              Circle = optical · Square = SAR · Green = pass found · Red = no pass.
+              Requires satellite track data — toggle any constellation in the Surveillance panel first.
+            </HintText>
           </Section>
 
           {/* ── Analysis params ───────────────────────────────────────── */}
@@ -532,5 +617,15 @@ function buildSummary(c: MissionConditionsUi): string[] {
   if (c.slopeEnabled)          out.push(`Slope ≤ ${Math.round(c.maxSlopeDeg)}°`);
   if (c.trafficabilityEnabled) out.push(`Traffic ≥ ${Math.round(c.minTrafficabilityPct)} %`);
   if (c.losEnabled)            out.push(`LOS ≥ ${c.minLineOfSightKm.toFixed(1)} km`);
+  if (c.satOpticalEnabled) {
+    const b = c.satOpticalBeforeH > 0 ? `−${c.satOpticalBeforeH}h` : "";
+    const a = c.satOpticalAfterH  > 0 ? `+${c.satOpticalAfterH}h`  : "";
+    out.push(`Optical${b || a ? ` ${[b, a].filter(Boolean).join("/")}` : " (exact)"}`);
+  }
+  if (c.satSarEnabled) {
+    const b = c.satSarBeforeH > 0 ? `−${c.satSarBeforeH}h` : "";
+    const a = c.satSarAfterH  > 0 ? `+${c.satSarAfterH}h`  : "";
+    out.push(`SAR${b || a ? ` ${[b, a].filter(Boolean).join("/")}` : " (exact)"}`);
+  }
   return out;
 }

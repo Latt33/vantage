@@ -1,6 +1,6 @@
-"""CelesTrak TLE fetcher + SGP4 satellite trajectory predictor.
+"""N2YO TLE fetcher + SGP4 satellite trajectory predictor.
 
-Fetches Two-Line Element sets from CelesTrak's GP catalogue, propagates each
+Fetches Two-Line Element sets from the N2YO API by NORAD ID, propagates each
 orbit using SGP4 at 5-minute intervals for 24 hours, converts TEME positions
 to geodetic (lat/lon/alt), and returns ground-track features whose closest
 approach to the AoI centre is ≤ PASS_RADIUS_KM.
@@ -15,6 +15,7 @@ import asyncio
 import datetime
 import logging
 import math
+import os
 from typing import Any
 
 from src.service._shared.bbox import BBox
@@ -22,8 +23,8 @@ from src.service._shared.client import client
 
 logger = logging.getLogger(__name__)
 
-# gp.php was retired; the current API uses path-based URLs
-CELESTRAK_GROUP_URL = "https://celestrak.org/SPACETRACK/query/GP/GROUP/{group}/FORMAT/json"
+N2YO_API_KEY = os.environ.get("N2YO_API_KEY", "")
+N2YO_TLE_URL = "https://api.n2yo.com/rest/v1/satellite/tle/{norad_id}&apiKey={api_key}"
 
 # NORAD IDs per capability-filter id (matches frontend capabilities.ts)
 CONSTELLATION_SATS: dict[str, dict[str, str]] = {
@@ -41,7 +42,6 @@ CONSTELLATION_SATS: dict[str, dict[str, str]] = {
     },
     "iceye_x": {
         "46497": "ICEYE-X4",
-        "47951": "ICEYE-X5",
         "48918": "ICEYE-X6",
     },
     "planet_skysat": {
@@ -51,14 +51,6 @@ CONSTELLATION_SATS: dict[str, dict[str, str]] = {
     },
 }
 
-# CelesTrak group name → set of NORAD IDs we want from that group.
-# One HTTP request per group instead of one per satellite.
-_GROUP_NORAD: dict[str, set[str]] = {
-    "sentinel":  {"39634", "62048", "40697", "42063", "60079"},
-    "landsat":   {"49044"},
-    "iceye":     {"46497", "47951", "48918"},
-    "planet":    {"43797", "43798", "43800"},
-}
 
 PASS_RADIUS_KM = 500.0
 TRACK_HOURS = 72
@@ -136,39 +128,30 @@ def _split_antimeridian(coords: list[list[float]]) -> list[list[list[float]]]:
 # TLE fetch
 # ---------------------------------------------------------------------------
 
-async def _fetch_group(group: str, wanted: set[str]) -> dict[str, tuple[str, str]]:
-    """Fetch all TLEs for a CelesTrak group, return only the NORAD IDs in `wanted`."""
-    url = CELESTRAK_GROUP_URL.format(group=group)
+async def _fetch_tle(norad_id: str) -> tuple[str, tuple[str, str]] | None:
+    """Fetch TLE for a single NORAD ID from N2YO. Returns (norad_id, (line1, line2)) or None."""
+    url = N2YO_TLE_URL.format(norad_id=norad_id, api_key=N2YO_API_KEY)
     try:
         resp = await client.get(url, timeout=30)
         resp.raise_for_status()
         data = resp.json()
-        result: dict[str, tuple[str, str]] = {}
-        for entry in data:
-            catnr = str(entry.get("NORAD_CAT_ID", ""))
-            if catnr in wanted and "TLE_LINE1" in entry and "TLE_LINE2" in entry:
-                result[catnr] = (entry["TLE_LINE1"], entry["TLE_LINE2"])
-        logger.info("CelesTrak group '%s': %d/%d TLEs resolved", group, len(result), len(wanted))
-        return result
+        raw = data.get("tle", "")
+        lines = [l.strip() for l in raw.split("\r\n") if l.strip()]
+        if len(lines) == 2:
+            return norad_id, (lines[0], lines[1])
+        logger.warning("N2YO NORAD %s: unexpected TLE format: %r", norad_id, raw)
+        return None
     except Exception as exc:
-        logger.warning("CelesTrak group '%s' fetch failed: %s", group, exc)
-        return {}
+        logger.warning("N2YO NORAD %s fetch failed: %s", norad_id, exc)
+        return None
 
 
 async def _fetch_tles(norad_ids: list[str]) -> dict[str, tuple[str, str]]:
-    """Fetch TLE lines for all NORAD IDs via group bulk requests."""
+    """Fetch TLEs for all NORAD IDs from N2YO in parallel."""
     if not norad_ids:
         return {}
-    wanted_set = set(norad_ids)
-    results = await asyncio.gather(*[
-        _fetch_group(group, wanted & wanted_set)
-        for group, wanted in _GROUP_NORAD.items()
-        if wanted & wanted_set
-    ])
-    merged: dict[str, tuple[str, str]] = {}
-    for r in results:
-        merged.update(r)
-    return merged
+    results = await asyncio.gather(*[_fetch_tle(nid) for nid in norad_ids])
+    return {nid: tle for r in results if r is not None for nid, tle in [r]}
 
 
 # ---------------------------------------------------------------------------
@@ -253,11 +236,24 @@ async def compute_trajectories(bbox: BBox) -> dict:
             # 5-minute track for the LineString (smaller payload)
             coarse_track = _propagate(tle[0], tle[1], now, TRACK_STEP_S, total_s)
 
-            # Build antimeridian-safe MultiLineString
-            coords = [[p["lon"], p["lat"]] for p in coarse_track]
-            timestamps = [p["ts"] for p in coarse_track]
-            altitudes = [p["alt_km"] for p in coarse_track]
-            segments = _split_antimeridian(coords)
+            # Build antimeridian-safe MultiLineString.
+            # _split_antimeridian may drop single-point segments, so derive
+            # timestamps/altitudes from the coords that actually made it into
+            # the final segments — keeping them 1-to-1 with geometry coordinates.
+            all_pts = coarse_track
+            raw_coords = [[p["lon"], p["lat"]] for p in all_pts]
+            segments = _split_antimeridian(raw_coords)
+
+            # Rebuild the flat list of included coordinates so we can filter
+            # the associated metadata to the same length.
+            included_coords: list[list[float]] = [c for seg in segments for c in seg]
+            # Build a lookup from (lon, lat) string to original track point for
+            # fast metadata retrieval; duplicates (e.g. shared segment endpoints)
+            # are resolved by taking the first occurrence.
+            _coord_key = {f"{p['lon']},{p['lat']}": p for p in reversed(all_pts)}
+            timestamps = [_coord_key[f"{c[0]},{c[1]}"]["ts"] for c in included_coords]
+            altitudes  = [_coord_key[f"{c[0]},{c[1]}"]["alt_km"] for c in included_coords]
+
             geometry: dict[str, Any] = (
                 {"type": "MultiLineString", "coordinates": segments}
                 if len(segments) != 1
@@ -303,4 +299,30 @@ async def compute_trajectories(bbox: BBox) -> dict:
     constellations_empty = set(CONSTELLATION_SATS.keys()) - constellations_with_tracks
     if constellations_empty:
         logger.info("No passes within %d km for: %s", PASS_RADIUS_KM, ", ".join(sorted(constellations_empty)))
-    return {"type": "FeatureCollection", "features": features, "properties": {"constellations_with_tracks": list(constellations_with_tracks)}}
+
+    # Compute the earliest future overpass per constellation for the summary panel.
+    now_iso = now.isoformat()
+    next_overpass: dict[str, dict] = {}
+    for feat in features:
+        props = feat["properties"]
+        if props.get("feature_type") != "overpass":
+            continue
+        ts = props["timestamp"]
+        if ts < now_iso:
+            continue
+        cid = props["constellation"]
+        if cid not in next_overpass or ts < next_overpass[cid]["timestamp"]:
+            next_overpass[cid] = {
+                "satellite_name": props["satellite_name"],
+                "timestamp": ts,
+                "distance_km": props["distance_km"],
+            }
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "properties": {
+            "constellations_with_tracks": list(constellations_with_tracks),
+            "next_overpass_by_constellation": next_overpass,
+        },
+    }
