@@ -31,6 +31,9 @@ def _resolve_file(aoi_id: str, category: str, filename: str) -> Path:
         raise HTTPException(status_code=400, detail="Invalid filename")
     path = category_file(aoi_id, category, filename)
     if not path.exists():
+        bundled_path = Path(__file__).resolve().parent.parent.parent / "data" / aoi_id / category / filename
+        if bundled_path.exists():
+            return bundled_path
         raise HTTPException(
             status_code=404,
             detail=(
