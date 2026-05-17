@@ -29,7 +29,6 @@ const SOURCE_ACCENTS: Record<string, string> = {
   water:       "#2a6db5",
   weather:     "#2a6db5",
   infra_roads: "#a8a8a0",
-  cellular:    "#2a9d8a",
   traffic_cameras: "#e8622a",
 };
 
@@ -76,7 +75,6 @@ const MAP_SOURCE_IDS: Record<string, string> = {
   weather:     "natural-weather-src",
   terrain:     "dem-terrain-src",
   infra_roads: "infra-roads-src",
-  cellular:    "cellular-src",
   traffic_cameras: "traffic-cameras-src",
 };
 
@@ -89,7 +87,6 @@ const MAP_LAYER_IDS: Record<string, string[]> = {
   weather:     ["natural-weather-wind-arrows"],
   terrain:     ["dem-terrain-raster"],
   infra_roads: ["infra-roads-line"],
-  cellular:    ["cellular-halo", "cellular-circle"],
   traffic_cameras: ["traffic-camera-symbol"],
 };
 
@@ -105,8 +102,6 @@ const MAP_LAYER_OPACITY_PROP: Record<string, "fill-opacity" | "line-opacity" | "
   "natural-weather-wind-arrows": "text-opacity",
   "dem-terrain-raster":     "raster-opacity",
   "infra-roads-line":       "line-opacity",
-  "cellular-halo":          "circle-opacity",
-  "cellular-circle":        "circle-opacity",
   "traffic-camera-symbol":  "icon-opacity",
 };
 
@@ -129,7 +124,6 @@ const SOURCE_STAGE: Record<string, string> = {
   weather:     "weather",
   terrain:     "dem",
   infra_roads: "infrastructure",
-  cellular:    "cellular",
   traffic_cameras: "traffic_cameras",
 };
 
@@ -191,7 +185,6 @@ function createEmptySourceData(): Record<string, FeatureCollection> {
     weather: EMPTY_FC,
     terrain: EMPTY_FC,
     infra_roads: EMPTY_FC,
-    cellular: EMPTY_FC,
     traffic_cameras: EMPTY_FC,
     satellites: EMPTY_FC,
   };
@@ -236,6 +229,7 @@ export default function OperationsPage() {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const movementCorridorsImageUrlRef = useRef<string | null>(null);
   const fpvThreatImageUrlRef = useRef<string | null>(null);
+  const satelliteOverlayJobRef = useRef<string | null>(null);
 
   const [mapReady, setMapReady] = useState(false);
   const [layers, setLayers] = useState<LayerConfig[]>(INITIAL_LAYERS);
@@ -274,7 +268,6 @@ export default function OperationsPage() {
     terrain:     EMPTY_FC,
     infra_roads: EMPTY_FC,
     infra_rail:  EMPTY_FC,
-    cellular:    EMPTY_FC,
     traffic_cameras: EMPTY_FC,
   });
 
@@ -854,52 +847,6 @@ export default function OperationsPage() {
       });
 
       // ── Surveillance ──────────────────────────────────────────────────────
-      map.addSource(MAP_SOURCE_IDS.cellular, { type: "geojson", data: EMPTY_FC });
-      map.addLayer({
-        id: "cellular-halo",
-        type: "circle",
-        source: MAP_SOURCE_IDS.cellular,
-        layout: { visibility: "none" },
-        paint: {
-          "circle-radius": [
-            "interpolate",
-            ["linear"],
-            ["coalesce", ["get", "range"], 0],
-            0, 7,
-            500, 8,
-            2000, 10,
-            10000, 13,
-            50000, 18,
-          ],
-          "circle-color": "#6fe0cd",
-          "circle-stroke-color": "#17322f",
-          "circle-stroke-width": 0.5,
-          "circle-opacity": 0.18,
-        },
-      });
-      map.addLayer({
-        id: "cellular-circle",
-        type: "circle",
-        source: MAP_SOURCE_IDS.cellular,
-        layout: { visibility: "none" },
-        paint: {
-          "circle-radius": [
-            "interpolate",
-            ["linear"],
-            ["coalesce", ["get", "range"], 0],
-            0, 4,
-            500, 5,
-            2000, 7,
-            10000, 11,
-            50000, 16,
-          ],
-          "circle-color": "#2a9d8a",
-          "circle-stroke-color": "#111111",
-          "circle-stroke-width": 1,
-          "circle-opacity": 0.85,
-        },
-      });
-
       map.addSource(MAP_SOURCE_IDS.traffic_cameras, { type: "geojson", data: EMPTY_FC });
       map.addImage("traffic-camera-icon", createTrafficCameraIcon());
       map.addLayer({
@@ -1019,6 +966,7 @@ export default function OperationsPage() {
 
     const sourceId = MAP_SOURCE_IDS.forest;
     const layerId = "natural-forest-raster";
+    const forestLayer = layers.find((layer) => layer.id === "forest");
     const imageUrl = `${API_BASE_URL}/api/aoi/${activeAoiId}/land/forest.png?v=${encodeURIComponent(rasterVersion)}`;
     const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
       [aoi.minLon, aoi.maxLat],
@@ -1043,13 +991,13 @@ export default function OperationsPage() {
       id: layerId,
       type: "raster",
       source: sourceId,
-      layout: { visibility: "none" },
+      layout: { visibility: forestLayer?.visible ? "visible" : "none" },
       paint: {
-        "raster-opacity": 0.72,
+        "raster-opacity": forestLayer?.opacity ?? 0.72,
         "raster-resampling": "nearest",
       },
     });
-  }, [aoi, jobInfo, mapReady, stages.land, layers]);
+  }, [aoi, activeAoiId, rasterVersion, mapReady, stages.land]);
 
   useEffect(() => {
     if (!mapReady || !aoi || !jobInfo) return;
@@ -1064,6 +1012,19 @@ export default function OperationsPage() {
     const controller = new AbortController();
     const sourceId = MAP_SOURCE_IDS.satellite_imagery;
     const layerId = "natural-satellite-raster";
+    const satelliteLayer = layers.find((layer) => layer.id === "satellite_imagery");
+
+    // Fast path: when this job overlay is already loaded, just keep visual
+    // state in sync and avoid re-fetching overlay metadata.
+    if (
+      satelliteOverlayJobRef.current === currentJob.jobId
+      && map.getSource(sourceId)
+      && map.getLayer(layerId)
+    ) {
+      map.setLayoutProperty(layerId, "visibility", satelliteLayer?.visible ? "visible" : "none");
+      map.setPaintProperty(layerId, "raster-opacity", satelliteLayer?.opacity ?? 0.78);
+      return;
+    }
 
     async function syncSatelliteOverlay() {
       const res = await fetch(
@@ -1098,12 +1059,13 @@ export default function OperationsPage() {
         id: layerId,
         type: "raster",
         source: sourceId,
-        layout: { visibility: layers.find((layer) => layer.id === "satellite_imagery")?.visible ? "visible" : "none" },
+        layout: { visibility: satelliteLayer?.visible ? "visible" : "none" },
         paint: {
-          "raster-opacity": layers.find((layer) => layer.id === "satellite_imagery")?.opacity ?? 0.78,
+          "raster-opacity": satelliteLayer?.opacity ?? 0.78,
           "raster-resampling": "linear",
         },
       }, "aoi-outline");
+      satelliteOverlayJobRef.current = currentJob.jobId;
     }
 
     syncSatelliteOverlay().catch((err) => {
@@ -1760,7 +1722,7 @@ export default function OperationsPage() {
       layers: layers.filter((l) => ATMOS_IDS.includes(l.id)),
     },
     { title: "Demographic",     layers: layers.filter((l) => DEMO_IDS.includes(l.id)) },
-    { title: "Surveillance",    layers: layers.filter((l) => SURV_IDS.includes(l.id) && l.id !== "cellular") },
+    { title: "Surveillance",    layers: layers.filter((l) => SURV_IDS.includes(l.id)) },
   ];
 
   useEffect(() => {

@@ -270,40 +270,6 @@ async function loadTrafficCameras(area: AreaContext, signal?: AbortSignal): Prom
 
 // ── Surveillance ──────────────────────────────────────────────────────────────
 
-async function loadCellular(area: AreaContext, signal?: AbortSignal): Promise<FeatureCollection> {
-  const aoiId = getBackendAoiId(area);
-  const raw = await fetchJson(`/api/aoi/${aoiId}/cellular/towers`, signal);
-  const fc = asFeatureCollection(raw);
-  const features = fc.features
-    .map((feature) => {
-      if (feature.geometry?.type !== "Point") return null;
-      const coordinates = (feature.geometry as unknown as { coordinates?: unknown }).coordinates;
-      if (!Array.isArray(coordinates) || coordinates.length < 2) return null;
-
-      const lon = toFiniteNumber(coordinates[0]);
-      const lat = toFiniteNumber(coordinates[1]);
-      if (lon === null || lat === null) return null;
-
-      return {
-        ...feature,
-        geometry: {
-          type: "Point" as const,
-          coordinates: [lon, lat] as [number, number],
-        },
-        properties: {
-          ...(feature.properties ?? {}),
-          range: toFiniteNumber(feature.properties?.range) ?? feature.properties?.range,
-        },
-      } as Feature<Geometry>;
-    })
-    .filter((feature): feature is NonNullable<typeof feature> => feature !== null);
-
-  return {
-    ...fc,
-    features,
-  };
-}
-
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 export const SOURCES: DataSource[] = [
@@ -318,7 +284,6 @@ export const SOURCES: DataSource[] = [
   // Infrastructure
   { id: "infra_roads",      label: "Roads",           sublabel: "Highway network",          category: "infrastructure", hasData: false, load: loadInfraRoads },
   // Surveillance
-  { id: "cellular",         label: "Cell Towers",     sublabel: "RF coverage · Relays",     category: "surveillance",   hasData: false, load: loadCellular },
   { id: "traffic_cameras",   label: "Road Cameras",    sublabel: "Live weather cameras",     category: "surveillance",   hasData: false, load: loadTrafficCameras },
 ];
 

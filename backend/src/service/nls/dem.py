@@ -99,6 +99,10 @@ def _tiff_to_parquet(tiff_bytes: bytes, out_path) -> int:
             elevs = band[rows_flat, cols_flat]
 
             mask = (elevs != nodata) if nodata is not None else np.ones(len(elevs), dtype=bool)
+            # Border fill values from upstream tiles often arrive as zero.
+            # Treat <= 0 m as nodata so outside-coverage cells don't pollute
+            # percentiles/legends and dominate the rendered AOI.
+            mask = mask & np.isfinite(elevs) & (elevs > 0)
             df = pd.DataFrame({
                 "lon": lons[mask],
                 "lat": lats[mask],
@@ -152,13 +156,18 @@ def _tiff_to_png(tiff_bytes: bytes, bbox: BBox, out_path) -> tuple[int, int]:
             cropped = dst[row_start:row_stop, col_start:col_stop]
 
             valid = np.isfinite(cropped)
-            if not valid.any():
+            # Outside-country or uncovered border pixels frequently become 0;
+            # mask them out so they render transparent instead of white.
+            terrain_valid = valid & (cropped > 0)
+            if not terrain_valid.any():
+                terrain_valid = valid
+            if not terrain_valid.any():
                 image = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
                 ensure_dir(out_path.parent)
                 image.save(out_path)
                 return image.size
 
-            values = cropped[valid]
+            values = cropped[terrain_valid]
             low = float(np.percentile(values, 2))
             high = float(np.percentile(values, 98))
             if high <= low:
@@ -175,7 +184,7 @@ def _tiff_to_png(tiff_bytes: bytes, bbox: BBox, out_path) -> tuple[int, int]:
 
             rgba = np.zeros((cropped.shape[0], cropped.shape[1], 4), dtype=np.uint8)
             rgba[..., :3] = rgb
-            rgba[..., 3] = np.where(valid, 220, 0).astype(np.uint8)
+            rgba[..., 3] = np.where(terrain_valid, 220, 0).astype(np.uint8)
 
             image = Image.fromarray(rgba, mode="RGBA")
             ensure_dir(out_path.parent)

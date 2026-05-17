@@ -126,15 +126,31 @@ def delete_aoi(aoi_id: str) -> None:
 
 def list_aois() -> list[dict]:
     """List all existing AOIs with their metadata."""
-    if not DATA_ROOT.exists():
-        return []
+    aois: list[dict] = []
+    seen_ids: set[str] = set()
 
-    aois = []
-    for d in DATA_ROOT.iterdir():
-        if d.is_dir() and (d / "meta.json").exists():
+    def collect_from_root(root: Path) -> None:
+        if not root.exists():
+            return
+        for d in root.iterdir():
+            if not (d.is_dir() and (d / "meta.json").exists()):
+                continue
             meta = read_json(d / "meta.json")
-            if meta:
-                aois.append(meta)
+            if not isinstance(meta, dict):
+                continue
+            aoi_id = meta.get("aoi_id")
+            if not isinstance(aoi_id, str) or not aoi_id:
+                continue
+            if aoi_id in seen_ids:
+                continue
+            seen_ids.add(aoi_id)
+            aois.append(meta)
+
+    # Runtime writable AOIs first.
+    collect_from_root(DATA_ROOT)
+    # Fallback to bundled test areas shipped in the image/repo.
+    if _DEFAULT_DATA_ROOT.resolve() != DATA_ROOT.resolve():
+        collect_from_root(_DEFAULT_DATA_ROOT)
 
     aois.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return aois

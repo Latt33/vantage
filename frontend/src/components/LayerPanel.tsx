@@ -458,7 +458,9 @@ function LayerRow({ layer, onChange }: RowProps) {
   if (layer.loadState === "error") {
     badge = <span className="badge badge--crit">Error</span>;
   } else if (layer.loadState === "ready") {
-    if (layer.hasData !== true) badge = <span className="badge badge--warn">No Data</span>;
+    if (layer.visible && layer.hasData === false) {
+      badge = <span className="badge badge--warn">No Data</span>;
+    }
   } else if (layer.loadState === "loading") {
     badge = <span className="badge badge--info">Loading</span>;
   }
@@ -647,7 +649,9 @@ function InfraRow({ node, selected, onToggle, depth = 0, enabled = true, loadSta
   if (loadState === "error") {
     badge = <span className="badge badge--crit">Error</span>;
   } else if (loadState === "ready") {
-    if (hasData !== true) badge = <span className="badge badge--warn">No Data</span>;
+    if (selected.has(node.id) && hasData === false) {
+      badge = <span className="badge badge--warn">No Data</span>;
+    }
   } else if (loadState === "loading") {
     badge = <span className="badge badge--info">Loading</span>;
   }
