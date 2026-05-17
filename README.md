@@ -188,3 +188,10 @@ Finnish and EU sources are prioritised. Non-EU sources are used only when no equ
 | **Data Formats** | GeoJSON, GeoTIFF, PNG overlays, Parquet |
 | **Deployment** | Docker Compose |
 | **Report Export** | React-PDF |
+
+## License
+
+This project is licensed under the **Vantage Non-Commercial License (VNCL) v1.0**.
+
+- Direct and indirect commercial use is prohibited without prior written permission.
+- See [`LICENSE`](./LICENSE) for full terms.
