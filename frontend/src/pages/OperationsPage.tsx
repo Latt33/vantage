@@ -1037,11 +1037,10 @@ export default function OperationsPage() {
   }, [aoi, jobInfo, mapReady, stages.land, layers]);
 
   useEffect(() => {
-    if (!mapReady || !aoi || !jobInfo) return;
+    if (!mapReady || !aoi || !activeAoiId) return;
     if (stages.satellite_imagery !== "done") return;
     if (!MAPTILER_KEY) return;
 
-    const currentJob = jobInfo;
     const mapInstance = mapRef.current;
     if (!mapInstance) return;
     const map: maplibregl.Map = mapInstance;
@@ -1052,7 +1051,7 @@ export default function OperationsPage() {
 
     async function syncSatelliteOverlay() {
       const res = await fetch(
-        `${API_BASE_URL}/api/aoi/${currentJob.aoiId}/satellite_imagery/overlay?v=${encodeURIComponent(currentJob.jobId)}`,
+        `${API_BASE_URL}/api/aoi/${activeAoiId}/satellite_imagery/overlay?v=${encodeURIComponent(rasterVersion ?? activeAoiId ?? "")}`,
         { signal: controller.signal },
       );
       if (!res.ok) {
@@ -1098,7 +1097,7 @@ export default function OperationsPage() {
     });
 
     return () => controller.abort();
-  }, [aoi, jobInfo, layers, mapReady, stages.satellite_imagery]);
+  }, [aoi, activeAoiId, rasterVersion, layers, mapReady, stages.satellite_imagery]);
 
   useEffect(() => {
     if (!mapReady || !aoi || !activeAoiId || !rasterVersion) return;
@@ -1918,6 +1917,11 @@ function buildPlaceholderWindows(
 
   if (steps.length === 0) return [];
 
+  const evals = steps.map((step) => ({
+    pass: stepSatisfiesConditions(cond, atmosphericMeans(step.features), new Date(step.ts)),
+    hourOffset: (step.ts - nowMs) / 3_600_000,
+  }));
+
   const bands: MissionWindowBand[] = [];
   let i = 0;
   while (i < evals.length) {
@@ -1981,13 +1985,6 @@ function buildPlaceholderWindows(
   return bands;
 }
 
-interface AtmosStats {
-  windMs:      number | null;
-  gustMs:      number | null;
-  visibilityM: number | null;
-  cloudPct:    number | null;
-  precipMm:    number | null;
-}
 
 function atmosphericMeans(features: FeatureCollection["features"]): AtmosStats {
   const acc: Record<keyof AtmosStats, number[]> = {

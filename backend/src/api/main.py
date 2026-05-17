@@ -1,5 +1,7 @@
 """FastAPI entrypoint — app wiring only, no feature logic."""
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -28,10 +30,36 @@ from src.service._shared.storage import ensure_test_areas
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
+
+async def _bootstrap_test_areas() -> None:
+    """Queue a fetch job for any test area that has missing or stale data."""
+    from src.service._shared.test_areas import TEST_AREAS
+    from src.service._shared.storage import is_stale
+    from src.jobs.orchestrator import FETCH_STAGES, STAGE_NAMES, run_job
+    from src.jobs.store import create_job, new_id
+
+    for area in TEST_AREAS:
+        missing = [name for name, _ in FETCH_STAGES if is_stale(area.aoi_id, name)]
+        if not missing:
+            continue
+        job_id = new_id()
+        try:
+            await create_job(job_id, area.aoi_id, STAGE_NAMES)
+            asyncio.create_task(run_job(job_id, area.aoi_id, area.bbox))
+            logger.info(
+                "Bootstrap: queued fetch for test area '%s' (job %s, missing: %s)",
+                area.aoi_id, job_id, missing,
+            )
+        except Exception as exc:
+            logger.warning("Bootstrap: could not queue fetch for '%s': %s", area.aoi_id, exc)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_test_areas()
+    await _bootstrap_test_areas()
     yield
     await close_client()
 
