@@ -1,0 +1,1 @@
+{"fetched_at": "2026-05-17T06:51:04.836414+00:00", "source": "Derived movement corridors and FPV threat areas", "confidence": "high", "feature_counts": {"movement_cells_valid": 1249635, "fpv_time_steps": 65, "fpv_wind_grid_points": 48}}
