@@ -1,0 +1,11 @@
+# Ignore backend and large artifacts — frontend only
+backend/
+backend/**
+Dockerfile
+docker-compose.yml
+render.yaml
+.env
+*.pyc
+**/__pycache__/
+node_modules/
+*.log
