@@ -19,6 +19,7 @@ COPY pyproject.toml .python-version ./
 RUN uv sync --no-dev
 
 COPY src ./src
+COPY data ./data
 
 EXPOSE 8000
 

@@ -212,6 +212,16 @@ def ensure_test_areas() -> None:
     for area in TEST_AREAS:
         root = aoi_root(area.aoi_id)
         meta_path = root / "meta.json"
+        bundled_root = _DEFAULT_DATA_ROOT / area.aoi_id
+
+        # Fresh deployments start with an empty DATA_ROOT. If the checked-in
+        # bundle contains a prepared test AOI, hydrate the runtime copy from it
+        # so the read-only layer endpoints work immediately.
+        if bundled_root.exists():
+            ensure_dir(root)
+            shutil.copytree(bundled_root, root, dirs_exist_ok=True)
+            continue
+
         if meta_path.exists():
             continue
         ensure_dir(root)
