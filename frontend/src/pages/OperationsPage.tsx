@@ -155,13 +155,6 @@ interface SatelliteOverlayConfig {
   attribution?: string;
 }
 
-type AtmosStats = {
-  windMs: number | null;
-  gustMs: number | null;
-  visibilityM: number | null;
-  cloudPct: number | null;
-  precipMm: number | null;
-};
 
 function loadAoi(): BoundingBox | null {
   try {
@@ -1920,15 +1913,21 @@ function buildPlaceholderWindows(
 
   const bands: MissionWindowBand[] = [];
   let i = 0;
-  while (i < evals.length) {
-    if (!evals[i].pass) { i++; continue; }
-    const runStart = evals[i].hourOffset;
-    let runEnd = runStart;
-    while (i + 1 < evals.length && evals[i + 1].pass) {
+  while (i < steps.length) {
+    const currentStep = steps[i];
+    if (!stepSatisfiesConditions(cond, atmosphericMeans(currentStep.features), new Date(currentStep.ts))) {
       i++;
-      runEnd = evals[i].hourOffset;
+      continue;
     }
-    const nextOffset = i + 1 < evals.length ? evals[i + 1].hourOffset : runEnd + 1;
+    const runStart = (currentStep.ts - nowMs) / 3_600_000;
+    let runEnd = runStart;
+    while (i + 1 < steps.length) {
+      const nextStep = steps[i + 1];
+      if (!stepSatisfiesConditions(cond, atmosphericMeans(nextStep.features), new Date(nextStep.ts))) break;
+      i++;
+      runEnd = (steps[i].ts - nowMs) / 3_600_000;
+    }
+    const nextOffset = i + 1 < steps.length ? (steps[i + 1].ts - nowMs) / 3_600_000 : runEnd + 1;
     const bandEnd = Math.min(horizonH, Math.max(runStart + 1, nextOffset));
     bands.push({
       startHour: Math.max(0, Math.floor(runStart)),
