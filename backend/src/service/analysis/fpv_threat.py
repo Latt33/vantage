@@ -34,7 +34,9 @@ Output files:
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import math
 from pathlib import Path
 
 import numpy as np
@@ -65,11 +67,13 @@ _WIND_LOW_MS = 4.0
 _WIND_MID_MS = 8.0
 _WIND_MAX_MS = 12.0
 
-# Output raster size (long axis, in pixels). Forest polygons render fine at
-# this resolution; the wind grid is coarse (~9 km spacing) so the
-# nearest-neighbour lookup doesn't need more pixels than this.
+# Target ground resolution. 100 m / pixel is more than enough — the upstream
+# wind grid is ~9 km spaced and the forest mask is polygon-rasterized, so finer
+# pixels just bloat the PNG and the front-end texture without adding signal.
+# Hard caps keep pathologically large AoIs from producing huge rasters.
+_TARGET_RESOLUTION_M = 100.0
 _MAX_SIDE_PX = 1024
-_MIN_SIDE_PX = 512
+_MIN_SIDE_PX = 64
 
 # RGBA palette (R, G, B, A). Blue shades = drone is able to operate; darker /
 # more opaque = higher threat. Red = drone outside operational envelope (no
@@ -94,15 +98,15 @@ _IDW_EPS = 1e-6
 
 
 def _raster_size(bbox: BBox) -> tuple[int, int]:
-    lon_span = max(abs(bbox.max_lon - bbox.min_lon), 1e-9)
-    lat_span = max(abs(bbox.max_lat - bbox.min_lat), 1e-9)
-    aspect = lon_span / lat_span
-    if aspect >= 1:
-        width = _MAX_SIDE_PX
-        height = max(_MIN_SIDE_PX, int(round(_MAX_SIDE_PX / aspect)))
-    else:
-        height = _MAX_SIDE_PX
-        width = max(_MIN_SIDE_PX, int(round(_MAX_SIDE_PX * aspect)))
+    lon_span_deg = max(abs(bbox.max_lon - bbox.min_lon), 1e-9)
+    lat_span_deg = max(abs(bbox.max_lat - bbox.min_lat), 1e-9)
+    mid_lat = (bbox.min_lat + bbox.max_lat) * 0.5
+    lon_m = lon_span_deg * 111_320.0 * max(math.cos(math.radians(mid_lat)), 0.1)
+    lat_m = lat_span_deg * 111_320.0
+    width = int(round(lon_m / _TARGET_RESOLUTION_M))
+    height = int(round(lat_m / _TARGET_RESOLUTION_M))
+    width = max(_MIN_SIDE_PX, min(_MAX_SIDE_PX, width))
+    height = max(_MIN_SIDE_PX, min(_MAX_SIDE_PX, height))
     return width, height
 
 
@@ -283,26 +287,33 @@ def _wind_grid_from_lookup(
     return wind_ms
 
 
-def _classify_to_rgba(
-    forest_mask: np.ndarray,
-    wind_ms: np.ndarray,
-) -> np.ndarray:
-    h, w = forest_mask.shape
-    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+# Band indices. Two hours that classify into the same bands per cell produce
+# the same PNG, even if the underlying wind speeds differ — used for dedup.
+_BAND_NONE = 0  # forest canopy or no wind data → transparent
+_BAND_HIGH = 1
+_BAND_MODERATE = 2
+_BAND_LOW = 3
+_BAND_NO_POSSIBILITY = 4
 
+
+def _classify_bands(forest_mask: np.ndarray, wind_ms: np.ndarray) -> np.ndarray:
+    bands = np.zeros_like(forest_mask, dtype=np.uint8)
     valid = np.isfinite(wind_ms)
     open_ground = valid & (forest_mask == 0)
+    bands[open_ground & (wind_ms < _WIND_LOW_MS)] = _BAND_HIGH
+    bands[open_ground & (wind_ms >= _WIND_LOW_MS) & (wind_ms < _WIND_MID_MS)] = _BAND_MODERATE
+    bands[open_ground & (wind_ms >= _WIND_MID_MS) & (wind_ms < _WIND_MAX_MS)] = _BAND_LOW
+    bands[open_ground & (wind_ms >= _WIND_MAX_MS)] = _BAND_NO_POSSIBILITY
+    return bands
 
-    high = open_ground & (wind_ms < _WIND_LOW_MS)
-    moderate = open_ground & (wind_ms >= _WIND_LOW_MS) & (wind_ms < _WIND_MID_MS)
-    low = open_ground & (wind_ms >= _WIND_MID_MS) & (wind_ms < _WIND_MAX_MS)
-    no_possibility = open_ground & (wind_ms >= _WIND_MAX_MS)
 
-    rgba[high] = _COLOR_HIGH
-    rgba[moderate] = _COLOR_MODERATE
-    rgba[low] = _COLOR_LOW
-    rgba[no_possibility] = _COLOR_NO_POSSIBILITY
-    # Forest and no-wind-data stay (0,0,0,0).
+def _bands_to_rgba(bands: np.ndarray) -> np.ndarray:
+    h, w = bands.shape
+    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+    rgba[bands == _BAND_HIGH] = _COLOR_HIGH
+    rgba[bands == _BAND_MODERATE] = _COLOR_MODERATE
+    rgba[bands == _BAND_LOW] = _COLOR_LOW
+    rgba[bands == _BAND_NO_POSSIBILITY] = _COLOR_NO_POSSIBILITY
     return rgba
 
 
@@ -431,14 +442,35 @@ def build_fpv_threat_stack(aoi_id: str, bbox: BBox) -> dict:
         kept_indices.append(idx)
         kept_valid_times.append(valid_time)
 
+    # Adjacent forecast hours typically classify into identical band maps —
+    # wind speed only matters at the 4 / 8 / 12 m/s thresholds, and the forest
+    # mask never changes. Hash the band array per hour and reuse the PNG
+    # filename when an identical classification has already been written.
+    # Every kept valid_time still appears in the manifest, but many can share
+    # one file.
     rasters: list[dict] = []
+    digest_to_filename: dict[bytes, str] = {}
+    unique_png_count = 0
     for emit_idx, (idx, valid_time) in enumerate(zip(kept_indices, kept_valid_times)):
         wind_ms = _wind_grid_from_lookup(point_idx, point_weights, wind_stack[idx])
-        rgba = _classify_to_rgba(forest_mask, wind_ms)
-        filename = f"{_timestamp_slug(valid_time)}.png"
-        Image.fromarray(rgba, mode="RGBA").save(_stack_raster_path(aoi_id, filename))
-        if emit_idx == 0:
-            Image.fromarray(rgba, mode="RGBA").save(default_out_path)
+        bands = _classify_bands(forest_mask, wind_ms)
+        digest = hashlib.blake2b(bands.tobytes(), digest_size=16).digest()
+
+        filename = digest_to_filename.get(digest)
+        if filename is None:
+            filename = f"{_timestamp_slug(valid_time)}.png"
+            rgba = _bands_to_rgba(bands)
+            Image.fromarray(rgba, mode="RGBA").save(_stack_raster_path(aoi_id, filename))
+            digest_to_filename[digest] = filename
+            unique_png_count += 1
+            if emit_idx == 0:
+                Image.fromarray(rgba, mode="RGBA").save(default_out_path)
+        elif emit_idx == 0:
+            # First kept hour matched a not-yet-written file (can't happen on a
+            # fresh run, but guards against future reordering): regenerate the
+            # default snapshot from bands instead of re-reading the PNG.
+            Image.fromarray(_bands_to_rgba(bands), mode="RGBA").save(default_out_path)
+
         rasters.append({
             "valid_time": valid_time,
             "filename": filename,
@@ -455,6 +487,7 @@ def build_fpv_threat_stack(aoi_id: str, bbox: BBox) -> dict:
         "forest_polygons": int(len(forest_features)),
         "wind_grid_points": int(pt_lons.size),
         "time_steps": int(len(kept_valid_times)),
+        "unique_rasters": int(unique_png_count),
         "forecast_horizon_hours": _FORECAST_HOURS,
     }
 
@@ -480,10 +513,11 @@ def build_fpv_threat_stack(aoi_id: str, bbox: BBox) -> dict:
         feature_counts=counts,
     )
     logger.info(
-        "fpv_threat: %s (forecast hours persisted: %d / %d)",
+        "fpv_threat: %s (forecast hours persisted: %d / %d, unique PNGs: %d)",
         counts,
         len(kept_valid_times),
         _FORECAST_HOURS,
+        unique_png_count,
     )
     return {
         "source": "Derived FPV threat areas",

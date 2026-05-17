@@ -115,4 +115,11 @@ async def get_fpv_threat(
     if out_path is None or not out_path.exists():
         raise HTTPException(status_code=503, detail="derived raster not ready")
 
-    return FileResponse(out_path, media_type="image/png")
+    # FPV rasters are hourly and the front-end always refetches when the user
+    # switches timestep — keep them off the browser cache so memory doesn't
+    # grow as the operator scrubs through the 72-hour stack.
+    return FileResponse(
+        out_path,
+        media_type="image/png",
+        headers={"Cache-Control": "no-store"},
+    )

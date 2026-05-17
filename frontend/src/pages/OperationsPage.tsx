@@ -1287,9 +1287,12 @@ export default function OperationsPage() {
   }, [aoi, activeAoiId, rasterVersion, mapReady, stages.dem, stages.land, stages.infrastructure, stages.water, derivedSelected]);
 
   // FPV-threat areas (drones) — lazy raster derived from land-cover density + weather.
-  // Backend computes this from raw land cover polygons (dense-forest mask) and nearest
-  // wind grid, then serves a cached PNG. We prefetch once on first toggle-on so the
-  // ToolPanel row can show the same loading spinner behavior as movement corridors.
+  // Backend computes one ~100 m/pixel PNG per forecast hour. To keep memory bounded
+  // as the operator scrubs through the 72-hour stack, we hold at most one raster on
+  // the map at a time: when the toggle flips off or the selected hour changes, we
+  // fully remove the source + layer (releases the GPU texture) and refetch the new
+  // hour from the backend on the next render. The backend serves these with
+  // Cache-Control: no-store so the browser doesn't accumulate them either.
   const fpvThreatAreasKey = "fpv_drones:fpv_threat_areas";
   useEffect(() => {
     if (!mapReady || !aoi || !activeAoiId || !rasterVersion) return;
@@ -1301,6 +1304,18 @@ export default function OperationsPage() {
     const sourceId = "derived-fpv-threat-src";
     const layerId = "derived-fpv-threat-raster";
     const enabled = derivedSelected.has(fpvThreatAreasKey);
+
+    const teardown = () => {
+      if (map.getLayer(layerId)) map.removeLayer(layerId);
+      if (map.getSource(sourceId)) map.removeSource(sourceId);
+      fpvThreatImageUrlRef.current = null;
+    };
+
+    if (!enabled) {
+      teardown();
+      return;
+    }
+
     const validTimeQuery = selectedWeatherValidTime
       ? `?valid_time=${encodeURIComponent(selectedWeatherValidTime)}&v=${encodeURIComponent(rasterVersion)}`
       : `?v=${encodeURIComponent(rasterVersion)}`;
@@ -1312,19 +1327,13 @@ export default function OperationsPage() {
       [aoi.minLon, aoi.minLat],
     ];
 
-    if (!enabled) {
-      if (map.getLayer(layerId)) {
-        map.setLayoutProperty(layerId, "visibility", "none");
-      }
+    if (fpvThreatImageUrlRef.current === imageUrl && map.getSource(sourceId)) {
       return;
     }
 
-    if (map.getSource(sourceId) && fpvThreatImageUrlRef.current === imageUrl) {
-      if (map.getLayer(layerId)) {
-        map.setLayoutProperty(layerId, "visibility", "visible");
-      }
-      return;
-    }
+    // URL changed (different valid_time, or first show after toggle-on) — drop the
+    // old source so MapLibre releases the previous image before we add the new one.
+    teardown();
 
     setDerivedLoading((prev) => {
       if (prev.has(fpvThreatAreasKey)) return prev;
@@ -1339,25 +1348,19 @@ export default function OperationsPage() {
     fetch(imageUrl, { signal: controller.signal })
       .then((res) => {
         if (!res.ok) throw new Error(`request failed (${res.status})`);
-        return res.blob();
       })
       .then(() => {
         if (cancelled) return;
-        const existingSource = map.getSource(sourceId) as ImageSourceWithUpdate | undefined;
-        if (existingSource) {
-          existingSource.updateImage({ url: imageUrl, coordinates });
-        } else {
-          map.addSource(sourceId, { type: "image", url: imageUrl, coordinates });
-          map.addLayer({
-            id: layerId,
-            type: "raster",
-            source: sourceId,
-            paint: {
-              "raster-opacity": 0.78,
-              "raster-resampling": "nearest",
-            },
-          });
-        }
+        map.addSource(sourceId, { type: "image", url: imageUrl, coordinates });
+        map.addLayer({
+          id: layerId,
+          type: "raster",
+          source: sourceId,
+          paint: {
+            "raster-opacity": 0.78,
+            "raster-resampling": "nearest",
+          },
+        });
         fpvThreatImageUrlRef.current = imageUrl;
       })
       .catch((err) => {
@@ -1979,14 +1982,6 @@ function buildPlaceholderWindows(
   }
 
   return bands;
-}
-
-interface AtmosStats {
-  windMs:      number | null;
-  gustMs:      number | null;
-  visibilityM: number | null;
-  cloudPct:    number | null;
-  precipMm:    number | null;
 }
 
 function atmosphericMeans(features: FeatureCollection["features"]): AtmosStats {
