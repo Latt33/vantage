@@ -125,6 +125,16 @@ Helpers for building GeoJSON Feature and FeatureCollection objects consistently 
 
 ---
 
+## Deployment
+
+- Frontend deploys on Vercel from the repo root using `vercel.json`.
+- Backend deploys on Render from `backend/Dockerfile` via `render.yaml`.
+- The frontend must set `VITE_API_BASE_URL` to the Render backend URL in production.
+- Render must provide `REDIS_URL` and a persistent disk mount for `DATA_ROOT` if AOI data should survive restarts.
+- Backend liveness is `GET /health`.
+
+---
+
 ## Git Workflow
 
 - All development happens on the `dev` branch

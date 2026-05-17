@@ -155,6 +155,14 @@ interface SatelliteOverlayConfig {
   attribution?: string;
 }
 
+type AtmosStats = {
+  windMs: number | null;
+  gustMs: number | null;
+  visibilityM: number | null;
+  cloudPct: number | null;
+  precipMm: number | null;
+};
+
 function loadAoi(): BoundingBox | null {
   try {
     return JSON.parse(sessionStorage.getItem("aoi") ?? "null");
@@ -473,7 +481,7 @@ export default function OperationsPage() {
 
   async function onApplyMissionWindow(cond: MissionConditionsUi) {
     setMissionConditions(cond);
-    setMissionWindows(buildPlaceholderWindows(cond, satTracks));
+    setMissionWindows(buildPlaceholderWindows(cond, satTracks, weatherDisplayData.features));
   }
 
   function onLayerChange(id: LayerId, patch: Partial<LayerConfig>) {
@@ -1848,12 +1856,17 @@ export default function OperationsPage() {
 const OPTICAL_CONSTELLATIONS = new Set(["sentinel_2", "landsat_9", "planet_skysat"]);
 const SAR_CONSTELLATIONS     = new Set(["sentinel_1", "iceye_x"]);
 
-function buildPlaceholderWindows(cond: MissionConditionsUi, satTracks: FeatureCollection): MissionWindowBand[] {
-  const horizon = Math.max(1, cond.lookaheadHours);
+function buildPlaceholderWindows(
+  cond: MissionConditionsUi,
+  satTracks: FeatureCollection,
+  weatherFeatures: FeatureCollection["features"],
+): MissionWindowBand[] {
+  const horizonH = Math.max(1, cond.lookaheadHours);
+  const horizonMs = horizonH * 3_600_000;
+  const nowMs = Date.now();
 
-  // Group every grid point by its forecast timestamp.
-  const buckets = new Map<string, { ts: number; features: typeof features }>();
-  for (const f of features) {
+  const buckets = new Map<string, { ts: number; features: FeatureCollection["features"] }>();
+  for (const f of weatherFeatures) {
     const p = (f.properties ?? {}) as Record<string, unknown>;
     const validTime = p.valid_time;
     if (typeof validTime !== "string" || !validTime) continue;
@@ -1867,72 +1880,70 @@ function buildPlaceholderWindows(cond: MissionConditionsUi, satTracks: FeatureCo
     bucket.features.push(f);
   }
 
-  const nowMs = Date.now();
-  const horizonH = Math.max(1, cond.lookaheadHours);
-  const horizonMs = horizonH * 3_600_000;
-
-  // Keep only forecast steps inside [now, now + horizon].
   const steps = Array.from(buckets.values())
     .filter((b) => b.ts >= nowMs - 30 * 60_000 && b.ts - nowMs <= horizonMs)
     .sort((a, b) => a.ts - b.ts);
 
   if (steps.length === 0) return [];
 
-  const evals = steps.map((b) => {
-    const stats = atmosphericMeans(b.features);
-    return {
-      hourOffset: Math.max(0, (b.ts - nowMs) / 3_600_000),
-      pass: stepSatisfiesConditions(cond, stats, new Date(b.ts)),
-    };
-  });
-
-  // Coalesce runs of passing timesteps into one band each.
   const bands: MissionWindowBand[] = [];
+  let runStartMs: number | null = null;
+  let runEndMs: number | null = null;
 
-  for (let i = 0; i < seeds.length; i++) {
-    const c = seeds[i].center;
-    const half = baseWidth / 2;
-    const start = Math.round(Math.max(0, c - half));
-    const end = Math.round(Math.min(horizon, c + half));
-    if (end <= start) continue;
+  const pushRun = () => {
+    if (runStartMs === null || runEndMs === null) return;
+    const startHour = Math.max(0, (runStartMs - nowMs) / 3_600_000);
+    const endHour = Math.max(startHour, (runEndMs - nowMs) / 3_600_000);
+    if (endHour > startHour) {
+      bands.push({ startHour, endHour, kind: "good" });
+    }
+    runStartMs = null;
+    runEndMs = null;
+  };
 
-    // Confidence drops with forecast horizon — later windows tend to be uncertain.
-    const horizonFrac = c / horizon;
-    const goodChance = (1 - horizonFrac) * (0.4 + 0.6 * looseness);
-    const kind: MissionWindowBand["kind"] = goodChance >= cond.minScore ? "good" : "uncertain";
+  for (const step of steps) {
+    const stats = atmosphericMeans(step.features);
+    const pass = stepSatisfiesConditions(cond, stats, new Date(step.ts));
+    if (pass) {
+      if (runStartMs === null) {
+        runStartMs = step.ts;
+      }
+      runEndMs = step.ts + 3_600_000;
+    } else {
+      pushRun();
+    }
+  }
+  pushRun();
 
-    bands.push({ startHour: start, endHour: end, kind });
+  if (bands.length === 0) {
+    return [];
   }
 
-  // Annotate bands with satellite overpass coverage when checks are enabled.
   if (cond.satOpticalEnabled || cond.satSarEnabled) {
-    const nowMs = Date.now();
-
-    // Collect overpass timestamps (ms) by sensor type from the trajectory cache.
     const opticalTimes: number[] = [];
     const sarTimes: number[] = [];
     for (const feat of satTracks.features) {
-      const p = feat.properties;
+      const p = feat.properties as Record<string, unknown> | undefined;
       if (!p || p.feature_type !== "overpass") continue;
-      const ts = p.timestamp ? Date.parse(p.timestamp as string) : NaN;
-      if (isNaN(ts)) continue;
-      if (OPTICAL_CONSTELLATIONS.has(p.constellation as string)) opticalTimes.push(ts);
-      if (SAR_CONSTELLATIONS.has(p.constellation as string))     sarTimes.push(ts);
+      const ts = p.timestamp ? Date.parse(String(p.timestamp)) : NaN;
+      if (Number.isNaN(ts)) continue;
+      if (OPTICAL_CONSTELLATIONS.has(String(p.constellation))) opticalTimes.push(ts);
+      if (SAR_CONSTELLATIONS.has(String(p.constellation))) sarTimes.push(ts);
     }
 
     for (const band of bands) {
       const bandStartMs = nowMs + band.startHour * 3_600_000;
-      const bandEndMs   = nowMs + band.endHour   * 3_600_000;
+      const bandEndMs = nowMs + band.endHour * 3_600_000;
 
       if (cond.satOpticalEnabled) {
         const lo = bandStartMs - cond.satOpticalBeforeH * 3_600_000;
-        const hi = bandEndMs   + cond.satOpticalAfterH  * 3_600_000;
+        const hi = bandEndMs + cond.satOpticalAfterH * 3_600_000;
         band.satOpticalPass = opticalTimes.some((t) => t >= lo && t <= hi);
       }
 
       if (cond.satSarEnabled) {
         const lo = bandStartMs - cond.satSarBeforeH * 3_600_000;
-        const hi = bandEndMs   + cond.satSarAfterH  * 3_600_000;
+        const hi = bandEndMs + cond.satSarAfterH * 3_600_000;
         band.satSarPass = sarTimes.some((t) => t >= lo && t <= hi);
       }
     }

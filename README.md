@@ -43,3 +43,24 @@ cd frontend
 npm install
 npm run dev
 ```
+
+## Deploy on Vercel
+
+This repository is now intended for a split deployment:
+
+- Frontend on Vercel
+- Backend on Render
+
+Use the root `vercel.json` for the frontend app only, and deploy the FastAPI backend from `backend/` on Render.
+
+Frontend environment variables on Vercel:
+
+- `VITE_MAPTILER_KEY` for the frontend map tiles
+- `VITE_API_BASE_URL` set to the Render backend URL, for example `https://defence-backend.onrender.com`
+- `VITE_OPS_PASSWORD` if you keep the operations login gate enabled
+
+Notes:
+
+- Render should provide `REDIS_URL` and a persistent disk mount for `DATA_ROOT` if you want AOI results to survive restarts.
+- The backend health endpoint is `GET /health`.
+- `render.yaml` in the repo root deploys the backend from `backend/Dockerfile` plus a Redis service.

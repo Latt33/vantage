@@ -16,6 +16,7 @@ Nothing in this module knows about Redis or HTTP. It is pure filesystem I/O.
 
 import json
 import math
+import os
 import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,8 +25,16 @@ from pathlib import Path
 # Root and TTL config
 # ---------------------------------------------------------------------------
 
-# src/data/ — created at runtime, not committed, not volume-mounted
-DATA_ROOT: Path = Path(__file__).parent.parent.parent.parent / "data"
+# src/data/ — created at runtime, not committed, not volume-mounted.
+# Vercel cannot persist writes to the checked-in tree, so use /tmp there unless
+# an explicit DATA_ROOT is provided.
+_DEFAULT_DATA_ROOT = Path(__file__).parent.parent.parent.parent / "data"
+if os.getenv("DATA_ROOT"):
+    DATA_ROOT: Path = Path(os.getenv("DATA_ROOT", "")).expanduser()
+elif os.getenv("VERCEL") == "1":
+    DATA_ROOT = Path("/tmp/data")
+else:
+    DATA_ROOT = _DEFAULT_DATA_ROOT
 
 # How long each category's data is considered fresh.
 # Staleness is checked by comparing fetched_at in meta.json against now.

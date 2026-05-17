@@ -18,6 +18,8 @@ VITE_API_BASE_URL=http://localhost:8000
 VITE_OPS_PASSWORD=OPSEC
 ```
 
+For Vercel deployments, set `VITE_API_BASE_URL` to the Render backend URL instead of `http://localhost:8000`.
+
 Free Maptiler key: https://maptiler.com. Other scripts: `npm run build`, `npm run preview`.
 
 ## Flow

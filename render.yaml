@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: defence-backend
+    env: docker
+    rootDir: backend
+    dockerfilePath: Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    plan: starter
+    disk:
+      name: defence-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: defence-redis
+          property: connectionString
+      - key: DATA_ROOT
+        value: /var/data
+
+  - type: redis
+    name: defence-redis
+    plan: starter
+    ipAllowList: []
