@@ -1,6 +1,6 @@
 # Vantage | Automated Intelligence Preparation of the Battlefield
 
-Vantage is an operational planning tool that automates IPB using open-source data. Draw an area on the map, and the system fetches, analyses, and visualises everything an operational planner needs — terrain, weather, infrastructure, surveillance, and derived tactical assessments in minutes, not weeks.
+Vantage is an operational planning tool that automates IPB using open-source data. Draw an area on the map, and the system fetches, analyses, and visualises everything an operational planner needs - terrain, weather, infrastructure, surveillance, and derived tactical assessments in minutes, not weeks.
 
 ## Dashboard Overview
 
