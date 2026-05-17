@@ -2,6 +2,8 @@
 
 **Team:** Atte Laakso, Nikolas Juhava, Qilun Li
 
+Participated in the Junction Defence Hackathon — awarded second place among ~20 teams.
+
 Vantage is an operational planning tool that automates IPB using open-source data. Draw an area on the map, and the system fetches, analyses, and visualises everything an operational planner needs - terrain, weather, infrastructure, surveillance, and derived tactical assessments in minutes, not weeks.
 
 ## Dashboard Overview
@@ -186,11 +188,3 @@ Finnish and EU sources are prioritised. Non-EU sources are used only when no equ
 | **Data Formats** | GeoJSON, GeoTIFF, PNG overlays, Parquet |
 | **Deployment** | Docker Compose |
 | **Report Export** | React-PDF |
-
-## Team
-
-Built by the **Vantage** team.
-
-## Acknowledgements
-
-Participated in the Junction Defence Hackathon — awarded second place among ~20 teams.
