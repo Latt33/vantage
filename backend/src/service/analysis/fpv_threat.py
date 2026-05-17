@@ -9,8 +9,8 @@ FPV-drone threat raster stack covering the next 72 forecast hours:
     - Weather forecast (Open-Meteo grid, Parquet) → wind speed per grid point
 
 Classification rules (per cell):
-    - Forest cover                       → no threat (transparent)
-    - Wind speed ≥ _WIND_MAX_MS          → no threat (transparent)
+    - Forest cover                       → hidden under canopy (transparent)
+    - Wind speed ≥ _WIND_MAX_MS          → no possibility (red — drone out of envelope)
     - Wind speed < _WIND_LOW_MS          → HIGH threat (dark blue)
     - _WIND_LOW_MS ≤ wind < _WIND_MID_MS → MODERATE threat (medium blue)
     - _WIND_MID_MS ≤ wind < _WIND_MAX_MS → LOW threat (light blue)
@@ -71,12 +71,15 @@ _WIND_MAX_MS = 12.0
 _MAX_SIDE_PX = 1024
 _MIN_SIDE_PX = 512
 
-# RGBA palette (R, G, B, A). Threat is encoded by alpha-weighted shade of
-# blue — darker / more opaque = higher threat.
-_COLOR_NONE = (0, 0, 0, 0)                 # forest or wind out of envelope
+# RGBA palette (R, G, B, A). Blue shades = drone is able to operate; darker /
+# more opaque = higher threat. Red = drone outside operational envelope (no
+# possibility). Forest cells stay transparent because the canopy hides
+# whatever is underneath rather than ruling drones out.
+_COLOR_NONE = (0, 0, 0, 0)                 # forest canopy — hidden
 _COLOR_HIGH = (10, 30, 110, 210)           # dark blue
 _COLOR_MODERATE = (60, 110, 190, 180)      # medium blue
 _COLOR_LOW = (140, 180, 230, 140)          # light blue
+_COLOR_NO_POSSIBILITY = (210, 55, 55, 215) # red — wind exceeds drone envelope
 
 # Forecast horizon covered by the persisted stack. Matches the
 # `forecast_days: 3` window the weather service requests from Open-Meteo —
@@ -293,11 +296,13 @@ def _classify_to_rgba(
     high = open_ground & (wind_ms < _WIND_LOW_MS)
     moderate = open_ground & (wind_ms >= _WIND_LOW_MS) & (wind_ms < _WIND_MID_MS)
     low = open_ground & (wind_ms >= _WIND_MID_MS) & (wind_ms < _WIND_MAX_MS)
+    no_possibility = open_ground & (wind_ms >= _WIND_MAX_MS)
 
     rgba[high] = _COLOR_HIGH
     rgba[moderate] = _COLOR_MODERATE
     rgba[low] = _COLOR_LOW
-    # Forest, no-wind-data, and wind ≥ _WIND_MAX_MS all stay (0,0,0,0).
+    rgba[no_possibility] = _COLOR_NO_POSSIBILITY
+    # Forest and no-wind-data stay (0,0,0,0).
     return rgba
 
 
@@ -462,6 +467,9 @@ def build_fpv_threat_stack(aoi_id: str, bbox: BBox) -> dict:
             ),
             "cells_low": int(
                 ((first_wind >= _WIND_MID_MS) & (first_wind < _WIND_MAX_MS) & (forest_mask == 0)).sum()
+            ),
+            "cells_no_possibility": int(
+                ((first_wind >= _WIND_MAX_MS) & (forest_mask == 0)).sum()
             ),
         })
 

@@ -320,6 +320,7 @@ export default function TimeSlider({
             w.kind === "good"
               ? "rgba(150, 220, 150, 0.85)"
               : "rgba(232, 200, 60, 0.85)";
+          const isGood = w.kind === "good";
           const optChecked = w.satOpticalPass !== undefined && w.satOpticalPass !== null;
           const sarChecked = w.satSarPass !== undefined && w.satSarPass !== null;
           const satSuffix =
