@@ -1,0 +1,1 @@
+{"fetched_at": "2026-05-17T06:12:22.651682+00:00", "source": "Derived movement corridors (heavy vehicles)", "confidence": "high", "feature_counts": {"cells_total": 1249635, "cells_valid": 1249635, "cells_nogo": 50366, "cells_unsure": 69171, "cells_forest": 1269, "cells_water": 30934, "cells_road": 37496, "image_pixels": 574002}}

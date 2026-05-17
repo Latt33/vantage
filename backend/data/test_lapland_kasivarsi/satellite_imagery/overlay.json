@@ -1,0 +1,1 @@
+{"provider": "MapTiler Satellite", "tileset": "satellite-v2", "image_format": "jpg", "tile_size": 256, "minzoom": 0, "maxzoom": 20, "attribution": "MapTiler Satellite", "bbox": {"min_lon": 20.9, "min_lat": 68.75, "max_lon": 22.2, "max_lat": 69.2}}

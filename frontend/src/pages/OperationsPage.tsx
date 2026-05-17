@@ -352,6 +352,28 @@ export default function OperationsPage() {
     return typeof validTime === "string" && validTime.trim() ? validTime : null;
   }, [weatherDisplayData]);
 
+  // Coarsened valid_time for left-panel heavy renders (6-hour steps).
+  const selectedWeatherValidTimeCoarse = useMemo(() => {
+    const raw = sourceData.weather;
+    if (!raw || !raw.features || raw.features.length === 0) return null;
+    const coarseOffset = Math.round(timelineOffsetHours / 6) * 6;
+    const selectedMs = Date.now() + coarseOffset * 3_600_000;
+    let bestTime: string | null = null;
+    let minDiff = Infinity;
+    for (const f of raw.features) {
+      const p = f.properties;
+      if (!p || !p.valid_time) continue;
+      const t = toEpochMs(p.valid_time);
+      if (t === null) continue;
+      const diff = Math.abs(t - selectedMs);
+      if (diff < minDiff) {
+        minDiff = diff;
+        bestTime = p.valid_time;
+      }
+    }
+    return bestTime;
+  }, [sourceData.weather, timelineOffsetHours]);
+
   const weatherForecastHorizonHours = useMemo(() => {
     const raw = sourceData.weather;
     if (!raw || !raw.features || raw.features.length === 0) return missionConditions.lookaheadHours;
@@ -1203,7 +1225,9 @@ export default function OperationsPage() {
     const sourceId = "derived-movement-corridors-heavy-src";
     const layerId = "derived-movement-corridors-heavy-raster";
     const enabled = derivedSelected.has(movementCorridorsHeavyKey);
-    const imageUrl = `${API_BASE_URL}/api/aoi/${activeAoiId}/derived/movement_corridors/heavy.png?v=${encodeURIComponent(rasterVersion)}`;
+    const requestedImageUrl = `${API_BASE_URL}/api/aoi/${activeAoiId}/derived/movement_corridors/heavy.png?v=${encodeURIComponent(rasterVersion)}`;
+    // Use the first-requested URL for the life of this session/component.
+    const imageUrl = movementCorridorsImageUrlRef.current ?? requestedImageUrl;
     const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
       [aoi.minLon, aoi.maxLat],
       [aoi.maxLon, aoi.maxLat],
@@ -1294,10 +1318,14 @@ export default function OperationsPage() {
     const sourceId = "derived-fpv-threat-src";
     const layerId = "derived-fpv-threat-raster";
     const enabled = derivedSelected.has(fpvThreatAreasKey);
-    const validTimeQuery = selectedWeatherValidTime
-      ? `?valid_time=${encodeURIComponent(selectedWeatherValidTime)}&v=${encodeURIComponent(rasterVersion)}`
+    // Choose the valid_time at the moment the layer is first requested and
+    // persist that URL; do not re-run on subsequent slider changes.
+    const requestedValidTime = selectedWeatherValidTimeCoarse ?? selectedWeatherValidTime;
+    const requestedValidTimeQuery = requestedValidTime
+      ? `?valid_time=${encodeURIComponent(requestedValidTime)}&v=${encodeURIComponent(rasterVersion)}`
       : `?v=${encodeURIComponent(rasterVersion)}`;
-    const imageUrl = `${API_BASE_URL}/api/aoi/${activeAoiId}/derived/fpv_threat.png${validTimeQuery}`;
+    const requestedImageUrl = `${API_BASE_URL}/api/aoi/${activeAoiId}/derived/fpv_threat.png${requestedValidTimeQuery}`;
+    const imageUrl = fpvThreatImageUrlRef.current ?? requestedImageUrl;
     const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
       [aoi.minLon, aoi.maxLat],
       [aoi.maxLon, aoi.maxLat],
@@ -1371,7 +1399,10 @@ export default function OperationsPage() {
       cancelled = true;
       controller.abort();
     };
-  }, [aoi, activeAoiId, rasterVersion, mapReady, stages.land, stages.weather, derivedSelected, selectedWeatherValidTime]);
+  // Intentionally exclude `selectedWeatherValidTime` from deps so the effect
+  // doesn't re-run when the slider moves; the first-chosen valid_time is used.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aoi, activeAoiId, rasterVersion, mapReady, stages.land, stages.weather, derivedSelected]);
 
   // Sync layer visibility + opacity into MapLibre
   useEffect(() => {

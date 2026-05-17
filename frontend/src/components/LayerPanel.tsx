@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { INFRASTRUCTURE, InfraNode } from "../data/infrastructure";
 import { LayerConfig, LayerId, LayerSection, WeatherAverages } from "../types";
 
@@ -544,6 +544,27 @@ function LayerRow({ layer, onChange }: RowProps) {
 
 function OpacityControl({ opacity, onChange }: { opacity: number; onChange: (value: number) => void }) {
   const pct = Math.round(opacity * 100);
+  const [localPct, setLocalPct] = useState(pct);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setLocalPct(Math.round(opacity * 100));
+  }, [opacity]);
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
+
+  function scheduleCommit(value: number) {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      onChange(value / 100);
+      debounceRef.current = null;
+    }, 300);
+  }
+
   return (
     <div
       style={{
@@ -570,8 +591,28 @@ function OpacityControl({ opacity, onChange }: { opacity: number; onChange: (val
         min={0}
         max={100}
         step={1}
-        value={pct}
-        onChange={(e) => onChange(Number(e.target.value) / 100)}
+        value={localPct}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          setLocalPct(v);
+          scheduleCommit(v);
+        }}
+        onPointerDown={() => {
+          if (debounceRef.current) {
+            clearTimeout(debounceRef.current);
+            debounceRef.current = null;
+          }
+        }}
+        onPointerUp={() => {
+          if (debounceRef.current) {
+            clearTimeout(debounceRef.current);
+            onChange(localPct / 100);
+            debounceRef.current = null;
+          } else {
+            // ensure the final value is sent even if no debounce was pending
+            onChange(localPct / 100);
+          }
+        }}
         style={{ flex: 1 }}
       />
       <div
@@ -583,7 +624,7 @@ function OpacityControl({ opacity, onChange }: { opacity: number; onChange: (val
           textAlign: "right",
         }}
       >
-        {pct}%
+        {localPct}%
       </div>
     </div>
   );

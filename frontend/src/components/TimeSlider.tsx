@@ -129,11 +129,23 @@ export default function TimeSlider({
 
   function updateOffset(next: number) {
     const clamped = Math.min(Math.max(next, min), max);
-    if (onOffsetChange) {
+    // Always update local state so the UI reflects the current thumb position.
+    setOffset(clamped);
+    if (!onOffsetChange) return;
+
+    // If playing, send immediate 1-hour update to parent so playback is smooth.
+    if (isPlaying) {
       onOffsetChange(clamped);
       return;
     }
-    setOffset(clamped);
+
+    // Debounce commits while the user is scrubbing the slider.
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    debounceRef.current = window.setTimeout(() => {
+      onOffsetChange(clamped);
+      debounceRef.current = null;
+    }, 300);
+    return;
   }
 
   const [isPlaying, setIsPlaying] = useState(false);
@@ -142,6 +154,16 @@ export default function TimeSlider({
   useEffect(() => {
     offsetRef.current = safeOffset;
   }, [safeOffset]);
+
+  const debounceRef = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) {
+        window.clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!isPlaying) return;
@@ -395,6 +417,22 @@ export default function TimeSlider({
           step={1}
           value={safeOffset}
           onChange={(e) => updateOffset(parseInt(e.target.value, 10))}
+          onPointerDown={() => {
+            // while dragging, ensure we don't leave behind a pending commit
+            if (debounceRef.current) {
+              clearTimeout(debounceRef.current);
+              debounceRef.current = null;
+            }
+          }}
+          onPointerUp={() => {
+            // force any pending commit immediately on release
+            if (debounceRef.current) {
+              clearTimeout(debounceRef.current);
+              const toCommit = offsetRef.current;
+              debounceRef.current = null;
+              if (onOffsetChange) onOffsetChange(toCommit);
+            }
+          }}
           style={{ position: "absolute", inset: "0 0 12px 0", width: "100%" }}
         />
 

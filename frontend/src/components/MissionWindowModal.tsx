@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 
 /**
  * Mission Window Analysis — UI-only overlay.
@@ -471,6 +471,17 @@ function GradientRow({
   enabled, showToggle = true, onToggle, onChange,
 }: GradientRowProps) {
   const dim = !enabled;
+  const [local, setLocal] = useState(value);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => setLocal(value), [value]);
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+
+  function scheduleCommit(v: number) {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => { onChange(v); debounceRef.current = null; }, 300);
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -493,15 +504,17 @@ function GradientRow({
           color: dim ? "var(--color-text-dim)" : "var(--color-text-primary)",
           minWidth: 110, textAlign: "right",
           transition: "color 0.1s",
-        }}>{format(value)}</span>
+        }}>{format(local)}</span>
       </div>
       <input
         type="range"
         className="gradient-slider"
         min={min} max={max} step={step}
-        value={value}
+        value={local}
         disabled={dim}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
+        onChange={(e) => { const v = parseFloat(e.target.value); setLocal(v); scheduleCommit(v); }}
+        onPointerDown={() => { if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; } }}
+        onPointerUp={() => { if (debounceRef.current) { clearTimeout(debounceRef.current); onChange(local); debounceRef.current = null; } else { onChange(local); } }}
         style={{ ["--gradient" as string]: gradient }}
       />
     </div>
@@ -520,7 +533,17 @@ function VisibilityRow({ enabled, onToggle, valueM, onChange }: VisibilityRowPro
   // Snap whatever value comes in to the nearest categorical step.
   const idx = Math.max(0, VISIBILITY_STEPS_M.findIndex((s) => s >= valueM));
   const safeIdx = idx === -1 ? VISIBILITY_STEPS_M.length - 1 : idx;
-  const display = formatVisibility(VISIBILITY_STEPS_M[safeIdx]);
+  const [localIdx, setLocalIdx] = useState(safeIdx);
+  const display = formatVisibility(VISIBILITY_STEPS_M[localIdx]);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => setLocalIdx(safeIdx), [safeIdx]);
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+
+  function scheduleCommit(i: number) {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => { onChange(VISIBILITY_STEPS_M[i]); debounceRef.current = null; }, 300);
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -548,9 +571,11 @@ function VisibilityRow({ enabled, onToggle, valueM, onChange }: VisibilityRowPro
         min={0}
         max={VISIBILITY_STEPS_M.length - 1}
         step={1}
-        value={safeIdx}
+        value={localIdx}
         disabled={dim}
-        onChange={(e) => onChange(VISIBILITY_STEPS_M[parseInt(e.target.value, 10)])}
+        onChange={(e) => { const i = parseInt(e.target.value, 10); setLocalIdx(i); scheduleCommit(i); }}
+        onPointerDown={() => { if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; } }}
+        onPointerUp={() => { if (debounceRef.current) { clearTimeout(debounceRef.current); onChange(VISIBILITY_STEPS_M[localIdx]); debounceRef.current = null; } else { onChange(VISIBILITY_STEPS_M[localIdx]); } }}
         style={{ ["--gradient" as string]: GRADIENT_ABOVE }}
       />
       {/* Tick labels — show every categorical step under the slider. */}
