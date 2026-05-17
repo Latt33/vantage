@@ -1,5 +1,7 @@
 # Vantage | Automated Intelligence Preparation of the Battlefield
 
+**Team:** Atte Laakso, Nikolas Juhava, Qilun Li
+
 Vantage is an operational planning tool that automates IPB using open-source data. Draw an area on the map, and the system fetches, analyses, and visualises everything an operational planner needs - terrain, weather, infrastructure, surveillance, and derived tactical assessments in minutes, not weeks.
 
 ## Dashboard Overview
@@ -187,8 +189,8 @@ Finnish and EU sources are prioritised. Non-EU sources are used only when no equ
 
 ## Team
 
-Built by the **Vantage** team at the Junction Defence Hackathon.
+Built by the **Vantage** team.
 
-## License
+## Acknowledgements
 
-This project was developed for the Junction Defence Hackathon challenge by 61N Solutions.
+Participated in the Junction Defence Hackathon — awarded second place among ~20 teams.
